@@ -1,7 +1,7 @@
 package lila.quote
 
-import play.api.libs.json._
 import scala.util.Random
+import play.api.libs.json._
 
 final class Quote(val text: String, val author: String)
 
@@ -142,9 +142,8 @@ object Quote {
     ),
     new Quote(
       "Half the variations which are calculated in a tournament game turn out to be completely superfluous. Unfortunately, no one knows in advance which half.",
-      "Jan Tinman"
+      "Jan Timman"
     ),
-    new Quote("Chess is as much a mystery as women.", "Purdy"),
     new Quote("Good positions don’t win games, good moves do.", "Gerald Abrahams"),
     new Quote(
       "If I win a tournament, I win it by myself.  I do the playing. Nobody helps me.",
@@ -329,7 +328,6 @@ object Quote {
       "The battle for the ultimate truth will never be won.  And that’s why chess is so fascinating.",
       "Hans Kmoch"
     ),
-    new Quote("Chess makes man wiser and clear-sighted.", "Vladimir Putin"),
     new Quote(
       "I am still a victim of chess. It has all the beauty of art and much more. It cannot be commercialized. chess is much purer than art in its social position.",
       "Marcel Duchamp"
@@ -410,7 +408,7 @@ object Quote {
       "What is the object of playing a gambit opening?... To acquire a reputation of being a dashing player at the cost of losing a game.",
       "Siegbert Tarrasch"
     ),
-    new Quote("Pawns; they are the soul of this game, they alone form the attack and defense.", "Philidor"),
+    new Quote("Pawns; they are the soul of this game, they alone form the attack and defense.", "Francois-Andre Danican Philidor"),
     new Quote("In chess, at least, the brave inherit the earth.", "Edmar Mednis"),
     new Quote(
       "There are two classes of men; those who are content to yield to circumstances and who play whist; those who aim to control circumstances, and who play chess.",
@@ -1557,6 +1555,10 @@ object Quote {
     new Quote("It was once said that Tal sacrificed 9 pawns for an attack", "Mato"),
     new Quote("Be well enough prepared that preparation won't play a role.", "Magnus Carlsen"),
     new Quote("I don't study; I create.", "Viktor Korchnoi"),
+    new Quote(
+      "During the analysis, I discovered something very remarkable: the board is simply too small for two Queens of the same color. They only get in each other's way. I realize that this might sound stupid, but I fully mean it. The advantage is much less than one would expect by counting material.",
+      "Viktor Korchnoi"
+    ),
     new Quote("You'll be amazed at the people I've lost to while playing online.", "Magnus Carlsen"),
     new Quote(
       "[...], even extremely intoxicated my chess strength and knowledge is still in my bones.",
@@ -1577,17 +1579,20 @@ object Quote {
       "John Bartholomew"
     ),
     new Quote("Chess as a game is too serious; as a serious pursuit too frivolous.", "Moses Mendelssohn"),
+    new Quote("Chess makes me a better person", "Albert Badosa"),
     // lichess facts
     new Quote("All features for free; for everyone; forever.", "lichess.org"),
     new Quote("We will never display ads.", "lichess.org"),
     new Quote("We do not track you. It's a rare feature, nowadays.", "lichess.org"),
-    new Quote("Every chess player is a premium user.", "lichess.org")
+    new Quote("Every chess player is a premium user.", "lichess.org"),
+    new Quote("I never lose. I either win or learn.", "Nelson Mandela")
   )
 
-  implicit def quoteWriter: OWrites[Quote] = OWrites { q =>
-    Json.obj(
-      "text"   -> q.text,
-      "author" -> q.author
-    )
-  }
+  implicit def quoteWriter: OWrites[Quote] =
+    OWrites { q =>
+      Json.obj(
+        "text"   -> q.text,
+        "author" -> q.author
+      )
+    }
 }

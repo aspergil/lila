@@ -1,18 +1,20 @@
 package lila.coach
 
 import org.joda.time.DateTime
+import scala.concurrent.duration._
 
 import lila.db.dsl._
 import lila.db.Photographer
 import lila.notify.{ Notification, NotifyApi }
 import lila.security.Granter
-import lila.user.{ User, UserRepo }
+import lila.user.{ Holder, User, UserRepo }
 
 final class CoachApi(
     coachColl: Coll,
     reviewColl: Coll,
     userRepo: UserRepo,
     photographer: Photographer,
+    cacheApi: lila.memo.CacheApi,
     notifyApi: NotifyApi
 )(implicit ec: scala.concurrent.ExecutionContext) {
 
@@ -23,18 +25,20 @@ final class CoachApi(
   def find(username: String): Fu[Option[Coach.WithUser]] =
     userRepo named username flatMap { _ ?? find }
 
-  def find(user: User): Fu[Option[Coach.WithUser]] = Granter(_.Coach)(user) ?? {
-    byId(Coach.Id(user.id)) dmap {
-      _ map withUser(user)
+  def find(user: User): Fu[Option[Coach.WithUser]] =
+    Granter(_.Coach)(user) ?? {
+      byId(Coach.Id(user.id)) dmap {
+        _ map withUser(user)
+      }
     }
-  }
 
-  def findOrInit(user: User): Fu[Option[Coach.WithUser]] = Granter(_.Coach)(user) ?? {
-    find(user) orElse {
-      val c = Coach.WithUser(Coach make user, user)
-      coachColl.insert.one(c.coach) inject c.some
+  def findOrInit(coach: Holder): Fu[Option[Coach.WithUser]] =
+    Granter.is(_.Coach)(coach) ?? {
+      find(coach.user) orElse {
+        val c = Coach.WithUser(Coach make coach.user, coach.user)
+        coachColl.insert.one(c.coach) inject c.some
+      }
     }
-  }
 
   def isListedCoach(user: User): Fu[Boolean] =
     Granter(_.Coach)(user) ?? coachColl.exists($id(user.id) ++ $doc("listed" -> true))
@@ -72,7 +76,7 @@ final class CoachApi(
       else "No such coach"
     }
 
-  def remove(userId: User.ID) = coachColl.updateField($id(userId), "listed", false)
+  def remove(userId: User.ID): Funit = coachColl.updateField($id(userId), "listed", false).void
 
   def uploadPicture(c: Coach.WithUser, picture: Photographer.Uploaded): Funit =
     photographer(c.coach.id.value, picture).flatMap { pic =>
@@ -81,6 +85,14 @@ final class CoachApi(
 
   def deletePicture(c: Coach.WithUser): Funit =
     coachColl.update.one($id(c.coach.id), $unset("picturePath")).void
+
+  private val languagesCache = cacheApi.unit[Set[String]] {
+    _.refreshAfterWrite(1 hour)
+      .buildAsyncFuture { _ =>
+        coachColl.secondaryPreferred.distinctEasy[String, Set]("languages", $empty)
+      }
+  }
+  def allLanguages: Fu[Set[String]] = languagesCache.get {}
 
   private def withUser(user: User)(coach: Coach) = Coach.WithUser(coach, user)
 
@@ -165,7 +177,7 @@ final class CoachApi(
 
     def deleteAllBy(userId: User.ID): Funit =
       for {
-        reviews <- reviewColl.ext.find($doc("userId" -> userId)).list[CoachReview]
+        reviews <- reviewColl.list[CoachReview]($doc("userId" -> userId))
         _ <- reviews.map { review =>
           reviewColl.delete.one($doc("userId" -> review.userId)).void
         }.sequenceFu
@@ -173,9 +185,10 @@ final class CoachApi(
       } yield ()
 
     private def findRecent(selector: Bdoc): Fu[CoachReview.Reviews] =
-      reviewColl.ext
+      reviewColl
         .find(selector)
         .sort($sort desc "createdAt")
-        .list[CoachReview](100) map CoachReview.Reviews.apply
+        .cursor[CoachReview]()
+        .list(100) map CoachReview.Reviews.apply
   }
 }

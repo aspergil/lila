@@ -14,7 +14,7 @@ object player {
   def apply(
       pov: Pov,
       data: play.api.libs.json.JsObject,
-      tour: Option[lila.tournament.TourMiniView],
+      tour: Option[lila.tournament.GameView],
       simul: Option[lila.simul.Simul],
       cross: Option[lila.game.Crosstable.WithMatchup],
       playing: List[Pov],
@@ -28,7 +28,7 @@ object player {
           c,
           name = trans.chatRoom.txt(),
           timeout = false,
-          withNote = ctx.isAuth,
+          withNoteAge = ctx.isAuth option pov.game.secondsSinceCreation,
           public = false,
           resourceId = lila.chat.Chat.ResourceId(s"game/${c.chat.id}"),
           palantir = ctx.me.exists(_.canPalantir)
@@ -49,21 +49,15 @@ object player {
       moreJs = frag(
         roundNvuiTag,
         roundTag,
-        embedJsUnsafe(s"""lichess=window.lichess||{};customWS=true;onload=function(){
-LichessRound.boot(${safeJsonValue(
-          Json.obj(
-            "data"   -> data,
-            "i18n"   -> jsI18n(pov.game),
-            "userId" -> ctx.userId,
-            "chat"   -> chatJson
-          ) ++ tour
-            .flatMap(_.top)
-            .??(top =>
-              Json.obj(
-                "tour" -> lila.tournament.JsonView.top(top, lightUser)
-              )
+        embedJsUnsafeLoadThen(s"""LichessRound.boot(${safeJsonValue(
+          Json
+            .obj(
+              "data"   -> data,
+              "i18n"   -> jsI18n(pov.game),
+              "userId" -> ctx.userId,
+              "chat"   -> chatJson
             )
-        )})}""")
+        )})""")
       ),
       openGraph = povOpenGraph(pov).some,
       chessground = false,
@@ -71,10 +65,10 @@ LichessRound.boot(${safeJsonValue(
     )(
       main(cls := "round")(
         st.aside(cls := "round__side")(
-          bits.side(pov, data, tour, simul, bookmarked = bookmarked),
+          bits.side(pov, data, tour.map(_.tourAndTeamVs), simul, bookmarked = bookmarked),
           chatOption.map(_ => chat.frag)
         ),
-        bits.roundAppPreload(pov, true),
+        bits.roundAppPreload(pov, controls = true),
         div(cls := "round__underboard")(
           bits.crosstable(cross, pov.game),
           (playing.nonEmpty || simul.exists(_ isHost ctx.me)) option

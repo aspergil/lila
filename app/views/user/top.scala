@@ -12,16 +12,16 @@ object top {
 
   def apply(perfType: lila.rating.PerfType, users: List[User.LightPerf])(implicit ctx: Context) = {
 
-    val title = s"${perfType.name} top 200"
+    val title = s"${perfType.trans} top 200"
 
     views.html.base.layout(
       title = title,
       moreCss = cssTag("slist"),
       openGraph = lila.app.ui
         .OpenGraph(
-          title = s"Leaderboard of ${perfType.name}",
+          title = s"Leaderboard of ${perfType.trans}",
           url = s"$netBaseUrl${routes.User.topNb(200, perfType.key).url}",
-          description = s"The 200 best chess players in ${perfType.name}, sorted by rating"
+          description = s"The 200 best chess players in ${perfType.trans}, sorted by rating"
         )
         .some
     )(
@@ -29,14 +29,13 @@ object top {
         h1(a(href := routes.User.list, dataIcon := "I"), title),
         table(cls := "slist slist-pad")(
           tbody(
-            users.zipWithIndex.map {
-              case (u, i) =>
-                tr(
-                  td(i + 1),
-                  td(lightUserLink(u.user)),
-                  td(u.rating),
-                  td(ratingProgress(u.progress))
-                )
+            users.zipWithIndex.map { case (u, i) =>
+              tr(
+                td(i + 1),
+                td(lightUserLink(u.user)),
+                td(u.rating),
+                td(ratingProgress(u.progress))
+              )
             }
           )
         )

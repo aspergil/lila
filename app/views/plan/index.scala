@@ -1,5 +1,7 @@
 package views.html.plan
 
+import play.api.i18n.Lang
+
 import lila.api.Context
 import lila.app.templating.Environment._
 import lila.app.ui.ScalatagsTemplate._
@@ -7,6 +9,8 @@ import lila.app.ui.ScalatagsTemplate._
 import controllers.routes
 
 object index {
+
+  import trans.patron._
 
   def apply(
       email: Option[lila.common.EmailAddress],
@@ -16,28 +20,26 @@ object index {
       bestIds: List[String]
   )(implicit ctx: Context) = {
 
-    val title = "Become a Patron of lichess.org"
-
     views.html.base.layout(
-      title = title,
+      title = becomePatron.txt(),
       moreCss = cssTag("plan"),
       moreJs = frag(
-        script(src := "https://checkout.stripe.com/checkout.js"),
-        jsTag("checkout.js"),
-        embedJsUnsafe(s"""lichess.checkout("$stripePublicKey");""")
+        script(src := "https://js.stripe.com/v3/"),
+        jsModule("checkout"),
+        embedJsUnsafeLoadThen(s"""checkoutStart("$stripePublicKey")""")
       ),
       openGraph = lila.app.ui
         .OpenGraph(
-          title = title,
+          title = becomePatron.txt(),
           url = s"$netBaseUrl${routes.Plan.index.url}",
-          description = "Free chess for everyone, forever!"
+          description = freeChess.txt()
         )
         .some,
       csp = defaultCsp.withStripe.some
     ) {
       main(cls := "page-menu plan")(
         st.aside(cls := "page-menu__menu recent-patrons")(
-          h2("New Patrons"),
+          h2(newPatrons()),
           div(cls := "list")(
             recentIds.map { userId =>
               div(userIdLink(userId.some))
@@ -49,21 +51,14 @@ object index {
             div(cls := "banner one_time_active")(
               iconTag(patronIconChar),
               div(
-                h1("Thank you for your donation!"),
-                if (p.isLifetime)
-                  frag(
-                    "You have a ",
-                    strong("Lifetime Patron"),
-                    " account. That's pretty awesome!"
-                  )
+                h1(thankYou()),
+                if (p.isLifetime) youHaveLifetime()
                 else
                   p.expiresAt.map { expires =>
                     frag(
-                      "You have a Patron account until ",
-                      showDate(expires),
-                      ".",
+                      patronUntil(showDate(expires)),
                       br,
-                      "If not renewed, you will then be downgraded to free."
+                      ifNotRenewed()
                     )
                   }
               ),
@@ -72,37 +67,25 @@ object index {
           } getOrElse div(cls := "banner moto")(
             iconTag(patronIconChar),
             div(
-              h1("Free chess for everyone, forever!"),
-              p("No ads, no subscriptions; but open source and passion.")
+              h1(freeChess()),
+              p(noAdsNoSubs())
             ),
             iconTag(patronIconChar)
           ),
           div(cls := "box__pad")(
             div(cls := "wrapper")(
               div(cls := "text")(
-                p(
-                  "We are a non‑profit association because we believe in a free, ",
-                  "world-class chess experience for anyone, anywhere."
-                ),
-                p(
-                  "We rely on support from people like you to make it possible. ",
-                  "If you've gotten something out of Lichess, please take a second to pitch in!"
-                )
+                p(weAreNonProfit()),
+                p(weRelyOnSupport())
               ),
               div(cls := "content")(
                 div(
                   cls := "plan_checkout",
-                  attr("data-email") := email.map(_.value),
+                  attr("data-email") := email.??(_.value),
                   attr("data-lifetime-usd") := lila.plan.Cents.lifetime.usd.toString,
                   attr("data-lifetime-cents") := lila.plan.Cents.lifetime.value
                 )(
                   raw(s"""
-<form class="stripe_checkout none" action="${routes.Plan.charge}" method="POST">
-  <input type="hidden" class="token" name="token" />
-  <input type="hidden" class="email" name="email" />
-  <input type="hidden" class="amount" name="amount" />
-  <input type="hidden" class="freq" name="freq" />
-</form>
 <form class="paypal_checkout onetime none" action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
   <input type="hidden" name="custom" value="${~ctx.userId}">
   <input type="hidden" name="amount" class="amount" value="">
@@ -150,11 +133,22 @@ object index {
   <input type="hidden" name="lc" value="US">
   <input type="hidden" name="currency_code" value="USD">
 </form>"""),
-                  patron.exists(_.isLifetime) option
-                    p(style := "text-align:center;margin-bottom:1em")("Make an extra donation?"),
+                  ctx.me map { me =>
+                    p(style := "text-align:center;margin-bottom:1em")(
+                      if (patron.exists(_.isLifetime))
+                        makeExtraDonation()
+                      else
+                        frag(
+                          "Donating ",
+                          strong("publicly"),
+                          " as ",
+                          userSpan(me)
+                        )
+                    )
+                  },
                   st.group(cls := "radio buttons freq")(
                     div(
-                      st.title := s"Pay ${lila.plan.Cents.lifetime.usd} once. Be a Lichess Patron forever!",
+                      st.title := payLifetimeOnce.txt(lila.plan.Cents.lifetime.usd),
                       cls := List("lifetime-check" -> patron.exists(_.isLifetime)),
                       input(
                         tpe := "radio",
@@ -163,10 +157,10 @@ object index {
                         patron.exists(_.isLifetime) option disabled,
                         value := "lifetime"
                       ),
-                      label(`for` := "freq_lifetime")("Lifetime")
+                      label(`for` := "freq_lifetime")(lifetime())
                     ),
                     div(
-                      st.title := "Recurring billing, renewing your Patron Wings every month.",
+                      st.title := recurringBilling.txt(),
                       input(
                         tpe := "radio",
                         name := "freq",
@@ -174,10 +168,10 @@ object index {
                         checked,
                         value := "monthly"
                       ),
-                      label(`for` := "freq_monthly")("Monthly")
+                      label(`for` := "freq_monthly")(monthly())
                     ),
                     div(
-                      st.title := "A single donation that grants you the Patron Wings for one month.",
+                      st.title := singleDonation.txt(),
                       input(
                         tpe := "radio",
                         name := "freq",
@@ -185,7 +179,7 @@ object index {
                         checked,
                         value := "onetime"
                       ),
-                      label(`for` := "freq_onetime")("One-time")
+                      label(`for` := "freq_onetime")(onetime())
                     )
                   ),
                   div(cls := "amount_choice")(
@@ -207,7 +201,11 @@ object index {
                       },
                       div(cls := "other")(
                         input(tpe := "radio", name := "plan", id := "plan_other", value := "other"),
-                        label(`for` := "plan_other")("Other")
+                        label(
+                          `for` := "plan_other",
+                          title := pleaseEnterAmount.txt(),
+                          attr("data-trans-other") := otherAmount.txt()
+                        )(otherAmount())
                       )
                     )
                   ),
@@ -220,18 +218,23 @@ object index {
                     )
                   ),
                   div(cls := "service")(
-                    button(cls := "stripe button")("Credit Card"),
-                    button(cls := "paypal button")("PayPal")
+                    if (ctx.isAuth)
+                      button(cls := "stripe button")(withCreditCard())
+                    else
+                      a(
+                        cls := "stripe button",
+                        href := s"${routes.Auth.login}?referrer=${routes.Plan.index}"
+                      )(withCreditCard()),
+                    button(cls := "paypal button")(withPaypal())
                   )
                 )
               )
             ),
-            p(cls := "small_team")(
-              "We are a small team, so your support makes a huge difference!"
-            ),
+            p(id := "error")(),
+            p(cls := "small_team")(weAreSmallTeam()),
             faq,
             div(cls := "best_patrons")(
-              h2("The celebrated Patrons who make Lichess possible"),
+              h2(celebratedPatrons()),
               div(cls := "list")(
                 bestIds.map { userId =>
                   div(userIdLink(userId.some))
@@ -244,63 +247,45 @@ object index {
     }
   }
 
-  private def faq = div(cls := "faq")(
-    dl(
-      dt("Where does the money go?"),
-      dd(
-        "First of all, powerful servers.",
-        br,
-        "Then we pay a full-time developer: ",
-        userIdLink("thibault".some),
-        ", the founder of Lichess.",
-        br,
-        "See the ",
-        a(href := "/costs", target := "_blank")("detailed cost breakdown.")
-      ),
-      dt("Is Lichess an official non-profit?"),
-      dd(
-        "Yes, here's the ",
-        a(
-          href := "http://www.journal-officiel.gouv.fr/association/index.php?ACTION=Rechercher&WHAT=lichess.org"
-        )(
-          "act of creation (FR)"
+  private def faq(implicit lang: Lang) =
+    div(cls := "faq")(
+      dl(
+        dt(whereMoneyGoes()),
+        dd(
+          serversAndDeveloper(userIdLink("thibault".some)),
+          br,
+          a(href := routes.Main.costs, targetBlank)(costBreakdown()),
+          "."
         ),
-        "."
-      )
-    ),
-    dl(
-      dt("Can I change/cancel my monthly support?"),
-      dd(
-        "Yes, at any time, from this page.",
-        br,
-        "Or you can ",
-        a(href := routes.Main.contact, target := "_blank")("contact Lichess support"),
-        "."
+        dt(officialNonProfit()),
+        dd(
+          a(
+            href := "https://www.journal-officiel.gouv.fr/associations/detail-annonce/associations_b/20160025/818"
+          )(actOfCreation()),
+          "."
+        )
       ),
-      dt("Other methods of donation?"),
-      dd(
-        "We also accept ",
-        a(href := staticUrl("doc/iban_LICHESS_ORG_00022031601.pdf"), target := "_blank")(
-          "bank transfers"
+      dl(
+        dt(changeMonthlySupport()),
+        dd(
+          changeOrContact(a(href := routes.Main.contact, targetBlank)(contactSupport()))
         ),
-        ".",
-        br,
-        "And here's our bitcoin address: ",
-        code("15ZA4bBki3uu3yR2ENC2WYa9baVGUZ8Cf8")
-      )
-    ),
-    dl(
-      dt("Are some features reserved to Patrons?"),
-      dd(
-        a(href := routes.Plan.features, target := "_blank")("No"),
-        ", because ",
-        "Lichess is entirely free, forever, and for everyone. That's a promise. ",
-        "But Patrons get bragging rights with a cool new profile icon.",
-        br,
-        "See the ",
-        a(href := routes.Plan.features, target := "_blank")("detailed features comparison"),
-        "."
+        dt(otherMethods()),
+        dd(
+          a(href := assetUrl("doc/iban_LICHESS_ORG_00022031601.pdf"), targetBlank)(bankTransfers()),
+          ".",
+          br,
+          bitcoin(code("15ZA4bBki3uu3yR2ENC2WYa9baVGUZ8Cf8"))
+        )
+      ),
+      dl(
+        dt(patronFeatures()),
+        dd(
+          noPatronFeatures(),
+          br,
+          a(href := routes.Plan.features, targetBlank)(featuresComparison()),
+          "."
+        )
       )
     )
-  )
 }

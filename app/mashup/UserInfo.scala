@@ -21,7 +21,6 @@ case class UserInfo(
     nbBlockers: Option[Int],
     nbPosts: Int,
     nbStudies: Int,
-    playTime: Option[User.PlayTime],
     trophies: Trophies,
     shields: List[lila.tournament.TournamentShield.Award],
     revolutions: List[lila.tournament.Revolution.Award],
@@ -34,9 +33,10 @@ case class UserInfo(
 
   def crosstable = nbs.crosstable
 
-  def completionRatePercent = completionRate.map { cr =>
-    math.round(cr * 100)
-  }
+  def completionRatePercent =
+    completionRate.map { cr =>
+      math.round(cr * 100)
+    }
 
   def countTrophiesAndPerfCups = trophies.size + ranks.count(_._2 <= 100)
 }
@@ -76,10 +76,9 @@ object UserInfo {
         } zip
         ctx.userId.?? { myId =>
           relationApi.fetchBlocks(u.id, myId).mon(_.user segment "blocks")
-        } dmap {
-        case relation ~ notes ~ followable ~ blocked =>
+        } dmap { case relation ~ notes ~ followable ~ blocked =>
           Social(relation, notes, followable, blocked)
-      }
+        }
   }
 
   case class NbGames(
@@ -97,20 +96,20 @@ object UserInfo {
       crosstableApi: lila.game.CrosstableApi
   ) {
     def apply(u: User, ctx: Context, withCrosstable: Boolean): Fu[NbGames] =
-      (withCrosstable ?? ctx.me.filter(u !=) ?? { me =>
+      (withCrosstable ?? ctx.me.filter(u.!=) ?? { me =>
         crosstableApi.withMatchup(me.id, u.id) dmap some
       }).mon(_.user segment "crosstable") zip
         gameCached.nbPlaying(u.id).mon(_.user segment "nbPlaying") zip
         gameCached.nbImportedBy(u.id).mon(_.user segment "nbImported") zip
         bookmarkApi.countByUser(u).mon(_.user segment "nbBookmarks") dmap {
-        case crosstable ~ playing ~ imported ~ bookmark =>
-          NbGames(
-            crosstable,
-            playing = playing,
-            imported = imported,
-            bookmark = bookmark
-          )
-      }
+          case crosstable ~ playing ~ imported ~ bookmark =>
+            NbGames(
+              crosstable,
+              playing = playing,
+              imported = imported,
+              bookmark = bookmark
+            )
+        }
   }
 
   final class UserInfoApi(
@@ -127,53 +126,53 @@ object UserInfo {
       teamCached: lila.team.Cached,
       coachApi: lila.coach.CoachApi,
       insightShare: lila.insight.Share,
-      playTimeApi: lila.game.PlayTimeApi,
       playbanApi: lila.playban.PlaybanApi
   )(implicit ec: scala.concurrent.ExecutionContext) {
     def apply(user: User, nbs: NbGames, ctx: Context): Fu[UserInfo] =
       (ctx.noBlind ?? ratingChartApi(user)).mon(_.user segment "ratingChart") zip
         relationApi.countFollowers(user.id).mon(_.user segment "nbFollowers") zip
-        (ctx.me ?? Granter(_.UserSpy) ?? { relationApi.countBlockers(user.id) dmap some })
+        (ctx.me ?? Granter(_.UserModView) ?? { relationApi.countBlockers(user.id) dmap some })
           .mon(_.user segment "nbBlockers") zip
         postApi.nbByUser(user.id).mon(_.user segment "nbPosts") zip
-        studyRepo.countByOwner(user.id).mon(_.user segment "nbStudies") zip
+        studyRepo.countByOwner(user.id).nevermind.mon(_.user segment "nbStudies") zip
         trophyApi.findByUser(user).mon(_.user segment "trophy") zip
         shieldApi.active(user).mon(_.user segment "shields") zip
         revolutionApi.active(user).mon(_.user segment "revolutions") zip
-        teamCached.teamIdsList(user.id).mon(_.user segment "teamIds") zip
+        teamCached
+          .teamIdsList(user.id)
+          .map(_.take(lila.team.Team.maxJoinCeiling))
+          .mon(_.user segment "teamIds") zip
         coachApi.isListedCoach(user).mon(_.user segment "coach") zip
-        streamerApi.isStreamer(user).mon(_.user segment "streamer") zip
+        streamerApi.isActualStreamer(user).mon(_.user segment "streamer") zip
         (user.count.rated >= 10).??(insightShare.grant(user, ctx.me)) zip
-        playTimeApi(user).mon(_.user segment "playTime") zip
         playbanApi.completionRate(user.id).mon(_.user segment "completion") zip
         (nbs.playing > 0) ?? isHostingSimul(user.id).mon(_.user segment "simul") zip
         userCached.rankingsOf(user.id) map {
-        case ratingChart ~ nbFollowers ~ nbBlockers ~ nbPosts ~ nbStudies ~ trophies ~ shields ~ revols ~ teamIds ~ isCoach ~ isStreamer ~ insightVisible ~ playTime ~ completionRate ~ hasSimul ~ ranks =>
-          new UserInfo(
-            user = user,
-            ranks = ranks,
-            nbs = nbs,
-            hasSimul = hasSimul,
-            ratingChart = ratingChart,
-            nbFollowers = nbFollowers,
-            nbBlockers = nbBlockers,
-            nbPosts = nbPosts,
-            nbStudies = nbStudies,
-            playTime = playTime,
-            trophies = trophies ::: trophyApi.roleBasedTrophies(
-              user,
-              Granter(_.PublicMod)(user),
-              Granter(_.Developer)(user),
-              Granter(_.Verified)(user)
-            ),
-            shields = shields,
-            revolutions = revols,
-            teamIds = teamIds,
-            isStreamer = isStreamer,
-            isCoach = isCoach,
-            insightVisible = insightVisible,
-            completionRate = completionRate
-          )
-      }
+          case ratingChart ~ nbFollowers ~ nbBlockers ~ nbPosts ~ nbStudies ~ trophies ~ shields ~ revols ~ teamIds ~ isCoach ~ isStreamer ~ insightVisible ~ completionRate ~ hasSimul ~ ranks =>
+            new UserInfo(
+              user = user,
+              ranks = ranks,
+              nbs = nbs,
+              hasSimul = hasSimul,
+              ratingChart = ratingChart,
+              nbFollowers = nbFollowers,
+              nbBlockers = nbBlockers,
+              nbPosts = nbPosts,
+              nbStudies = nbStudies,
+              trophies = trophies ::: trophyApi.roleBasedTrophies(
+                user,
+                Granter(_.PublicMod)(user),
+                Granter(_.Developer)(user),
+                Granter(_.Verified)(user)
+              ),
+              shields = shields,
+              revolutions = revols,
+              teamIds = teamIds,
+              isStreamer = isStreamer,
+              isCoach = isCoach,
+              insightVisible = insightVisible,
+              completionRate = completionRate
+            )
+        }
   }
 }

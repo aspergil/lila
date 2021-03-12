@@ -1,4 +1,4 @@
-import { h } from 'snabbdom'
+import { h } from 'snabbdom';
 import { VNode } from 'snabbdom/vnode';
 import TournamentController from '../ctrl';
 import { TournamentData, MaybeVNodes } from '../interfaces';
@@ -11,27 +11,30 @@ import teamInfo from './teamInfo';
 import { numberRow } from './util';
 
 function confetti(data: TournamentData): VNode | undefined {
-  if (data.me && data.isRecentlyFinished && window.lichess.once('tournament.end.canvas.' + data.id))
+  if (data.me && data.isRecentlyFinished && lichess.once('tournament.end.canvas.' + data.id))
     return h('canvas#confetti', {
       hook: {
-        insert: _ => window.lichess.loadScript('javascripts/confetti.js')
-      }
+        insert: _ => lichess.loadScript('javascripts/confetti.js'),
+      },
     });
 }
 
-function stats(st, noarg): VNode {
-  return h('div.tour__stats', [
-    h('h2', noarg('tournamentComplete')),
-    h('table', [
-      numberRow(noarg('averageElo'), st.averageRating, 'raw'),
-      numberRow(noarg('gamesPlayed'), st.games),
-      numberRow(noarg('movesPlayed'), st.moves),
-      numberRow(noarg('whiteWins'), [st.whiteWins, st.games], 'percent'),
-      numberRow(noarg('blackWins'), [st.blackWins, st.games], 'percent'),
-      numberRow(noarg('draws'), [st.draws, st.games], 'percent'),
-      numberRow(noarg('berserkRate'), [st.berserks / 2, st.games], 'percent')
-    ])
-  ]);
+function stats(data: TournamentData, noarg: any): VNode {
+  const tableData = [
+    numberRow(noarg('averageElo'), data.stats.averageRating, 'raw'),
+    numberRow(noarg('gamesPlayed'), data.stats.games),
+    numberRow(noarg('movesPlayed'), data.stats.moves),
+    numberRow(noarg('whiteWins'), [data.stats.whiteWins, data.stats.games], 'percent'),
+    numberRow(noarg('blackWins'), [data.stats.blackWins, data.stats.games], 'percent'),
+    numberRow(noarg('draws'), [data.stats.draws, data.stats.games], 'percent'),
+  ];
+
+  if (data.berserkable) {
+    const berserkRate = [data.stats.berserks / 2, data.stats.games];
+    tableData.push(numberRow(noarg('berserkRate'), berserkRate, 'percent'));
+  }
+
+  return h('div.tour__stats', [h('h2', noarg('tournamentComplete')), h('table', tableData)]);
 }
 
 export const name = 'finished';
@@ -40,22 +43,18 @@ export function main(ctrl: TournamentController): MaybeVNodes {
   const pag = pagination.players(ctrl);
   const teamS = teamStanding(ctrl, 'finished');
   return [
-    ...(teamS ? [header(ctrl), teamS] : [
-      h('div.big_top', [
-        confetti(ctrl.data),
-        header(ctrl),
-        podium(ctrl)
-      ])
-    ]),
+    ...(teamS ? [header(ctrl), teamS] : [h('div.podium-wrap', [confetti(ctrl.data), header(ctrl), podium(ctrl)])]),
     controls(ctrl, pag),
-    standing(ctrl, pag)
+    standing(ctrl, pag),
   ];
 }
 
 export function table(ctrl: TournamentController): VNode | undefined {
-  return ctrl.playerInfo.id ? playerInfo(ctrl) : (
-    ctrl.teamInfo.requested ? teamInfo(ctrl) : (
-      stats ? stats(ctrl.data.stats, ctrl.trans.noarg) : undefined
-    )
-  );
+  return ctrl.playerInfo.id
+    ? playerInfo(ctrl)
+    : ctrl.teamInfo.requested
+    ? teamInfo(ctrl)
+    : stats
+    ? stats(ctrl.data, ctrl.trans.noarg)
+    : undefined;
 }

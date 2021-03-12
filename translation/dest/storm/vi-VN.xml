@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="moveToStart">Đi quân để bắt đầu</string>
+  <string name="puzzlesSolved">thế cờ đã giải</string>
+  <string name="newDailyHighscore">Điểm cao mới hàng ngày!</string>
+  <string name="newWeeklyHighscore">Điểm cao mới hàng tuần!</string>
+  <string name="newMonthlyHighscore">Điểm cao mới hàng tháng!</string>
+  <string name="newAllTimeHighscore">Điểm cao mới!</string>
+  <string name="previousHighscoreWasX">Điểm cao trước đây là %s</string>
+  <string name="playAgain">Chơi lại</string>
+  <plurals name="xRuns">
+    <item quantity="other">%s lần chơi</item>
+  </plurals>
+  <plurals name="playedNbRunsOfPuzzleStorm">
+    <item quantity="other">Đã chơi %1$s lượt %2$s</item>
+  </plurals>
+  <string name="highscoreX">Điểm cao: %s</string>
+  <string name="score">Điểm</string>
+  <string name="moves">Các nước đi</string>
+  <string name="accuracy">Độ chính xác</string>
+  <string name="combo" comment="combo&#10;&#10;A &quot;Combo&quot; is a consequtive sequence of correctly solved puzzles. Each correct move fills the combo bar. When the bar is full, you get a time bonus, and you increase the value of the next bonus.&#10;&#10;This string is the title for your best combo, shown in the stats page after completing a run of puzzle storm.">Chuỗi</string>
+  <string name="time">Thời gian</string>
+  <string name="timePerMove">Thời gian trên mỗi nước đi</string>
+  <string name="highestSolved" comment="highestSolved&#10;&#10;The rating of the highest rated puzzle solved correctly.">Giải được cao nhất</string>
+  <string name="puzzlesPlayed">Câu đố đã chơi</string>
+  <string name="newRun">Chơi mới (phím nhanh: Dấu cách)</string>
+  <string name="endRun">Kết thúc (phím nhanh: Enter)</string>
+  <string name="highscores">Điểm cao</string>
+  <string name="viewBestRuns">Xem các lần chơi tốt nhất</string>
+  <string name="bestRunOfDay">Hoạt động tốt nhất trong ngày</string>
+  <string name="runs">Lần chơi</string>
+</resources>

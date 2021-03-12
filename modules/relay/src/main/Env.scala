@@ -2,19 +2,26 @@ package lila.relay
 
 import akka.actor._
 import com.softwaremill.macwire._
-import play.api.libs.ws.WSClient
+import play.api.libs.ws.StandaloneWSClient
 import scala.concurrent.duration._
 
 import lila.common.config._
 
 final class Env(
-    ws: WSClient,
+    ws: StandaloneWSClient,
     db: lila.db.Db,
     studyApi: lila.study.StudyApi,
     chapterRepo: lila.study.ChapterRepo,
+    gameRepo: lila.game.GameRepo,
+    pgnDump: lila.game.PgnDump,
+    gameProxy: lila.round.GameProxyRepo,
     cacheApi: lila.memo.CacheApi,
-    slackApi: lila.slack.SlackApi
-)(implicit ec: scala.concurrent.ExecutionContext, system: ActorSystem) {
+    slackApi: lila.irc.SlackApi,
+    baseUrl: BaseUrl
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    system: ActorSystem
+) {
 
   private lazy val coll = db(CollName("relay"))
 
@@ -24,7 +31,7 @@ final class Env(
 
   private lazy val withStudy = wire[RelayWithStudy]
 
-  lazy val jsonView = new JsonView(new RelayMarkup)
+  lazy val jsonView = wire[JsonView]
 
   lazy val api: RelayApi = wire[RelayApi]
 
@@ -40,13 +47,14 @@ final class Env(
 
   system.scheduler.scheduleWithFixedDelay(1 minute, 1 minute) { () =>
     api.autoStart >> api.autoFinishNotSyncing
+    ()
   }
 
   lila.common.Bus.subscribeFun("studyLikes", "study", "relayToggle") {
-    case lila.study.actorApi.StudyLikes(id, likes)       => api.setLikes(Relay.Id(id.value), likes)
-    case lila.hub.actorApi.study.RemoveStudy(studyId, _) => api.onStudyRemove(studyId)
+    case lila.study.actorApi.StudyLikes(id, likes)       => api.setLikes(Relay.Id(id.value), likes).unit
+    case lila.hub.actorApi.study.RemoveStudy(studyId, _) => api.onStudyRemove(studyId).unit
     case lila.study.actorApi.RelayToggle(id, v, who) =>
-      studyApi.isContributor(id, who.u) flatMap {
+      studyApi.isContributor(id, who.u) foreach {
         _ ?? {
           api.requestPlay(Relay.Id(id.value), v)
         }

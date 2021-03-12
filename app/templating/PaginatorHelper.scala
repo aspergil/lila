@@ -1,11 +1,24 @@
 package lila.app
 package templating
 
+import lila.app.ui.ScalatagsTemplate._
 import lila.common.paginator.Paginator
 
 trait PaginatorHelper {
 
   implicit def toRichPager[A](pager: Paginator[A]): RichPager = new RichPager(pager)
+
+  def pagerNext(pager: lila.common.paginator.Paginator[_], url: Int => String): Option[Tag] =
+    pager.nextPage.map { np =>
+      div(cls := "pager")(pagerA(url(np)))
+    }
+
+  def pagerNextTable(pager: lila.common.paginator.Paginator[_], url: Int => String): Option[Tag] =
+    pager.nextPage.map { np =>
+      tr(cls := "pager")(th(pagerA(url(np))))
+    }
+
+  private def pagerA(url: String) = a(rel := "next", href := url)("Next")
 }
 
 final class RichPager(pager: Paginator[_]) {
@@ -26,13 +39,4 @@ final class RichPager(pager: Paginator[_]) {
     }
     pre ::: (fromPage to toPage).view.map(some).toList ::: post
   }
-
-  def firstIndex: Int =
-    (pager.maxPerPage.value * (pager.currentPage - 1) + 1) min pager.nbResults
-
-  def lastIndex: Int =
-    (firstIndex + pageNbResults - 1) max 0
-
-  def pageNbResults =
-    pager.currentPageResults.size
 }

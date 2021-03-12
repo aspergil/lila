@@ -1,13 +1,14 @@
-import { VNode } from 'snabbdom/vnode'
+import { VNode } from 'snabbdom/vnode';
 import { Player, Status, Source, Clock } from 'game';
 import * as cg from 'chessground/types';
 import { ForecastData } from './forecast/interfaces';
 import { StudyPracticeData, Goal as PracticeGoal } from './study/practice/interfaces';
 import { RelayData } from './study/relay/interfaces';
 import AnalyseController from './ctrl';
+import { ChatCtrl } from 'chat';
 
 export type MaybeVNode = VNode | string | null | undefined;
-export type MaybeVNodes = MaybeVNode[]
+export type MaybeVNodes = MaybeVNode[];
 export type Seconds = number;
 
 export { Key, Piece } from 'chessground/types';
@@ -40,11 +41,11 @@ export interface AnalyseData {
   clock?: Clock;
   pref: any;
   url: {
-    socket: string
-  }
+    socket: string;
+  };
   userTv?: {
-    id: string
-  }
+    id: string;
+  };
 }
 
 export interface ServerEvalData {
@@ -82,7 +83,7 @@ export interface Opening {
 
 export interface Division {
   middle?: number;
-  end?: number
+  end?: number;
 }
 
 export interface Analysis {
@@ -102,8 +103,8 @@ export interface AnalysisSide {
 export interface AnalyseOpts {
   element: HTMLElement;
   data: AnalyseData;
-  initialPly?: number | string;
   userId: string | null;
+  hunter: boolean;
   embed: boolean;
   explorer: boolean;
   socketSend: SocketSend;
@@ -112,14 +113,13 @@ export interface AnalyseOpts {
   tagTypes?: string;
   practice?: StudyPracticeData;
   relay?: RelayData;
-  $side?: JQuery;
-  $underboard?: JQuery;
+  $side?: Cash;
+  $underboard?: Cash;
   i18n: any;
-  chat: any;
-}
-
-export interface CgDests {
-  [key: string]: cg.Key[]
+  chat: {
+    parseMoves: boolean;
+    instance?: Promise<ChatCtrl>;
+  };
 }
 
 export interface JustCaptured extends cg.Piece {

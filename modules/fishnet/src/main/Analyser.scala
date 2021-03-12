@@ -1,11 +1,10 @@
 package lila.fishnet
 
 import org.joda.time.DateTime
-import chess.format.Forsyth
+import scala.concurrent.duration._
 
 import lila.analyse.AnalysisRepo
 import lila.game.{ Game, UciMemo }
-import lila.common.WorkQueue
 
 final class Analyser(
     repo: FishnetRepo,
@@ -14,16 +13,19 @@ final class Analyser(
     uciMemo: UciMemo,
     evalCache: FishnetEvalCache,
     limiter: Limiter
-)(implicit ec: scala.concurrent.ExecutionContext, mat: akka.stream.Materializer) {
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    system: akka.actor.ActorSystem
+) {
 
   val maxPlies = 200
 
-  private val workQueue = new WorkQueue(256, "fishnetAnalyser")
+  private val workQueue = new lila.hub.DuctSequencer(maxSize = 256, timeout = 5 seconds, "fishnetAnalyser")
 
   def apply(game: Game, sender: Work.Sender): Fu[Boolean] =
     (game.metadata.analysed ?? analysisRepo.exists(game.id)) flatMap {
-      case true                       => fuFalse
-      case _ if Game.isOldHorde(game) => fuFalse
+      case true                  => fuFalse
+      case _ if !game.analysable => fuFalse
       case _ =>
         limiter(sender, ignoreConcurrentCheck = false) flatMap { accepted =>
           accepted ?? {
@@ -57,9 +59,9 @@ final class Analyser(
   def study(req: lila.hub.actorApi.fishnet.StudyChapterRequest): Fu[Boolean] =
     analysisRepo exists req.chapterId flatMap {
       case true => fuFalse
-      case _ => {
+      case _ =>
         import req._
-        val sender = Work.Sender(req.userId.some, none, false, system = lila.user.User isOfficial req.userId)
+        val sender = Work.Sender(req.userId, none, mod = false, system = false)
         limiter(sender, ignoreConcurrentCheck = true) flatMap { accepted =>
           if (!accepted) logger.info(s"Study request declined: ${req.studyId}/${req.chapterId} by $sender")
           accepted ?? {
@@ -72,7 +74,7 @@ final class Analyser(
                 moves = moves take maxPlies map (_.uci) mkString " "
               ),
               // if black moves first, use 1 as startPly so the analysis doesn't get reversed
-              startPly = initialFen.map(_.value).flatMap(Forsyth.getColor).fold(0)(_.fold(0, 1)),
+              startPly = initialFen.flatMap(_.color).??(_.fold(0, 1)),
               sender = sender
             )
             workQueue {
@@ -88,23 +90,21 @@ final class Analyser(
             }
           } inject accepted
         }
-      }
     }
 
   private def makeWork(game: Game, sender: Work.Sender): Fu[Work.Analysis] =
-    gameRepo.initialFen(game) zip uciMemo.get(game) map {
-      case (initialFen, moves) =>
-        makeWork(
-          game = Work.Game(
-            id = game.id,
-            initialFen = initialFen,
-            studyId = none,
-            variant = game.variant,
-            moves = moves take maxPlies mkString " "
-          ),
-          startPly = game.chess.startedAtTurn,
-          sender = sender
-        )
+    gameRepo.initialFen(game) zip uciMemo.get(game) map { case (initialFen, moves) =>
+      makeWork(
+        game = Work.Game(
+          id = game.id,
+          initialFen = initialFen,
+          studyId = none,
+          variant = game.variant,
+          moves = moves take maxPlies mkString " "
+        ),
+        startPly = game.chess.startedAtTurn,
+        sender = sender
+      )
     }
 
   private def makeWork(game: Work.Game, startPly: Int, sender: Work.Sender): Work.Analysis =

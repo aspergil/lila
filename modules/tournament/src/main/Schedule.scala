@@ -1,8 +1,9 @@
 package lila.tournament
 
-import chess.StartingPosition
+import chess.format.FEN
 import chess.variant.Variant
 import org.joda.time.DateTime
+import play.api.i18n.Lang
 
 import lila.rating.PerfType
 
@@ -10,23 +11,92 @@ case class Schedule(
     freq: Schedule.Freq,
     speed: Schedule.Speed,
     variant: Variant,
-    position: StartingPosition,
+    position: Option[FEN],
     at: DateTime,
     conditions: Condition.All = Condition.All.empty
 ) {
 
-  def name = freq match {
-    case m @ Schedule.Freq.ExperimentalMarathon                                     => m.name
-    case _ if variant == chess.variant.Crazyhouse && conditions.minRating.isDefined => "Elite Crazyhouse"
-    case _ if variant.standard && position.initial =>
+  def name(full: Boolean = true)(implicit lang: Lang): String = {
+    import Schedule.Freq._
+    import Schedule.Speed._
+    import lila.i18n.I18nKeys.tourname._
+    if (variant.standard && position.isEmpty)
       (conditions.minRating, conditions.maxRating) match {
-        case (None, None)   => s"${freq.toString} ${speed.toString}"
-        case (Some(_), _)   => s"Elite ${speed.toString}"
-        case (_, Some(max)) => s"U${max.rating} ${speed.toString}"
+        case (None, None) =>
+          (freq, speed) match {
+            case (Hourly, Rapid) if full      => hourlyRapidArena.txt()
+            case (Hourly, Rapid)              => hourlyRapid.txt()
+            case (Hourly, speed) if full      => hourlyXArena.txt(speed.name)
+            case (Hourly, speed)              => hourlyX.txt(speed.name)
+            case (Daily, Rapid) if full       => dailyRapidArena.txt()
+            case (Daily, Rapid)               => dailyRapid.txt()
+            case (Daily, Classical) if full   => dailyClassicalArena.txt()
+            case (Daily, Classical)           => dailyClassical.txt()
+            case (Daily, speed) if full       => dailyXArena.txt(speed.name)
+            case (Daily, speed)               => dailyX.txt(speed.name)
+            case (Eastern, Rapid) if full     => easternRapidArena.txt()
+            case (Eastern, Rapid)             => easternRapid.txt()
+            case (Eastern, Classical) if full => easternClassicalArena.txt()
+            case (Eastern, Classical)         => easternClassical.txt()
+            case (Eastern, speed) if full     => easternXArena.txt(speed.name)
+            case (Eastern, speed)             => easternX.txt(speed.name)
+            case (Weekly, Rapid) if full      => weeklyRapidArena.txt()
+            case (Weekly, Rapid)              => weeklyRapid.txt()
+            case (Weekly, Classical) if full  => weeklyClassicalArena.txt()
+            case (Weekly, Classical)          => weeklyClassical.txt()
+            case (Weekly, speed) if full      => weeklyXArena.txt(speed.name)
+            case (Weekly, speed)              => weeklyX.txt(speed.name)
+            case (Monthly, Rapid) if full     => monthlyRapidArena.txt()
+            case (Monthly, Rapid)             => monthlyRapid.txt()
+            case (Monthly, Classical) if full => monthlyClassicalArena.txt()
+            case (Monthly, Classical)         => monthlyClassical.txt()
+            case (Monthly, speed) if full     => monthlyXArena.txt(speed.name)
+            case (Monthly, speed)             => monthlyX.txt(speed.name)
+            case (Yearly, Rapid) if full      => yearlyRapidArena.txt()
+            case (Yearly, Rapid)              => yearlyRapid.txt()
+            case (Yearly, Classical) if full  => yearlyClassicalArena.txt()
+            case (Yearly, Classical)          => yearlyClassical.txt()
+            case (Yearly, speed) if full      => yearlyXArena.txt(speed.name)
+            case (Yearly, speed)              => yearlyX.txt(speed.name)
+            case (Shield, Rapid) if full      => rapidShieldArena.txt()
+            case (Shield, Rapid)              => rapidShield.txt()
+            case (Shield, Classical) if full  => classicalShieldArena.txt()
+            case (Shield, Classical)          => classicalShield.txt()
+            case (Shield, speed) if full      => xShieldArena.txt(speed.name)
+            case (Shield, speed)              => xShield.txt(speed.name)
+            case _ if full                    => xArena.txt(s"${freq.toString} ${speed.name}")
+            case _                            => s"${freq.toString} ${speed.name}"
+          }
+        case (Some(_), _) if full   => eliteXArena.txt(speed.name)
+        case (Some(_), _)           => eliteX.txt(speed.name)
+        case (_, Some(max)) if full => s"<${max.rating} ${xArena.txt(speed.name)}"
+        case (_, Some(max))         => s"<${max.rating} ${speed.name}"
       }
-    case _ if variant.standard => s"${position.shortName} ${speed.toString}"
-    case Schedule.Freq.Hourly  => s"${variant.name} ${speed.toString}"
-    case _                     => s"${freq.toString} ${variant.name}"
+    else if (variant.standard) {
+      val n = position.flatMap(Thematic.byFen).fold(speed.name) { pos =>
+        s"${pos.shortName} ${speed.name}"
+      }
+      if (full) xArena.txt(n) else n
+    } else
+      freq match {
+        case Hourly if full  => hourlyXArena.txt(variant.name)
+        case Hourly          => hourlyX.txt(variant.name)
+        case Daily if full   => dailyXArena.txt(variant.name)
+        case Daily           => dailyX.txt(variant.name)
+        case Eastern if full => easternXArena.txt(variant.name)
+        case Eastern         => easternX.txt(variant.name)
+        case Weekly if full  => weeklyXArena.txt(variant.name)
+        case Weekly          => weeklyX.txt(variant.name)
+        case Monthly if full => monthlyXArena.txt(variant.name)
+        case Monthly         => monthlyX.txt(variant.name)
+        case Yearly if full  => yearlyXArena.txt(variant.name)
+        case Yearly          => yearlyX.txt(variant.name)
+        case Shield if full  => xShieldArena.txt(variant.name)
+        case Shield          => xShield.txt(variant.name)
+        case _ =>
+          val n = s"${freq.name} ${variant.name}"
+          if (full) xArena.txt(n) else n
+      }
   }
 
   def day = at.withTimeAtStartOfDay
@@ -64,6 +134,15 @@ case class Schedule(
 
 object Schedule {
 
+  def uniqueFor(tour: Tournament) =
+    Schedule(
+      freq = Freq.Unique,
+      speed = Speed fromClock tour.clock,
+      variant = tour.variant,
+      position = tour.position,
+      at = tour.startsAt
+    )
+
   case class Plan(schedule: Schedule, buildFunc: Option[Tournament => Tournament]) {
 
     def build: Tournament = {
@@ -71,9 +150,10 @@ object Schedule {
       buildFunc.foldRight(t) { _(_) }
     }
 
-    def map(f: Tournament => Tournament) = copy(
-      buildFunc = buildFunc.fold(f)(f.compose).some
-    )
+    def map(f: Tournament => Tournament) =
+      copy(
+        buildFunc = buildFunc.fold(f)(f.compose).some
+      )
   }
 
   sealed abstract class Freq(val id: Int, val importance: Int) extends Ordered[Freq] {
@@ -118,7 +198,8 @@ object Schedule {
   }
 
   sealed abstract class Speed(val id: Int) {
-    val name = lila.common.String lcfirst toString
+    val name = toString
+    val key  = lila.common.String lcfirst name
   }
   object Speed {
     case object UltraBullet extends Speed(5)
@@ -132,14 +213,14 @@ object Schedule {
     val all: List[Speed] =
       List(UltraBullet, HyperBullet, Bullet, HippoBullet, SuperBlitz, Blitz, Rapid, Classical)
     val mostPopular: List[Speed] = List(Bullet, Blitz, Rapid, Classical)
-    def apply(name: String)      = all.find(_.name == name) orElse all.find(_.name.toLowerCase == name.toLowerCase)
+    def apply(key: String)       = all.find(_.key == key) orElse all.find(_.key.toLowerCase == key.toLowerCase)
     def byId(id: Int)            = all find (_.id == id)
-    def similar(s1: Speed, s2: Speed) = (s1, s2) match {
-      case (a, b) if a == b                              => true
-      case (HyperBullet, Bullet) | (Bullet, HyperBullet) => true
-      case (Bullet, HippoBullet) | (HippoBullet, Bullet) => true
-      case _                                             => false
-    }
+    def similar(s1: Speed, s2: Speed) =
+      (s1, s2) match {
+        case (a, b) if a == b                              => true
+        case (Bullet, HippoBullet) | (HippoBullet, Bullet) => true
+        case _                                             => false
+      }
     def fromClock(clock: chess.Clock.Config) = {
       val time = clock.estimateTotalSeconds
       if (time < 30) UltraBullet
@@ -150,13 +231,14 @@ object Schedule {
       else if (time < 1500) Rapid
       else Classical
     }
-    def toPerfType(speed: Speed) = speed match {
-      case UltraBullet                        => PerfType.UltraBullet
-      case HyperBullet | Bullet | HippoBullet => PerfType.Bullet
-      case SuperBlitz | Blitz                 => PerfType.Blitz
-      case Rapid                              => PerfType.Rapid
-      case Classical                          => PerfType.Classical
-    }
+    def toPerfType(speed: Speed) =
+      speed match {
+        case UltraBullet                        => PerfType.UltraBullet
+        case HyperBullet | Bullet | HippoBullet => PerfType.Bullet
+        case SuperBlitz | Blitz                 => PerfType.Blitz
+        case Rapid                              => PerfType.Rapid
+        case Classical                          => PerfType.Classical
+      }
   }
 
   sealed trait Season

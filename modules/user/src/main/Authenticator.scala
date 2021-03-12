@@ -52,14 +52,14 @@ final class Authenticator(
   private def authWithBenefits(auth: AuthData)(p: ClearPassword): Boolean = {
     val res = compare(auth, p)
     if (res && auth.salt.isDefined)
-      setPassword(id = auth._id, p) >>- lila.mon.user.auth.bcFullMigrate.increment()
+      setPassword(id = auth._id, p) >>- lila.mon.user.auth.bcFullMigrate.increment().unit
     res
   }
 
   private def loginCandidate(select: Bdoc): Fu[Option[User.LoginCandidate]] =
     userRepo.coll.one[AuthData](select, authProjection)(AuthDataBSONHandler) zip userRepo.coll
       .one[User](select) map {
-      case (Some(authData), Some(user)) if user.enabled || !user.lameOrTroll =>
+      case (Some(authData), Some(user)) if user.canLogin =>
         User.LoginCandidate(user, authWithBenefits(authData)).some
       case _ => none
     }

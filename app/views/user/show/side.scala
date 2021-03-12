@@ -1,12 +1,13 @@
 package views.html.user.show
 
+import controllers.routes
+import play.api.i18n.Lang
+
 import lila.api.Context
 import lila.app.templating.Environment._
 import lila.app.ui.ScalatagsTemplate._
 import lila.rating.PerfType
 import lila.user.User
-
-import controllers.routes
 
 object side {
 
@@ -19,24 +20,28 @@ object side {
     def showNonEmptyPerf(perf: lila.rating.Perf, perfType: PerfType) =
       perf.nonEmpty option showPerf(perf, perfType)
 
-    def showPerf(perf: lila.rating.Perf, perfType: PerfType, name: Option[String] = none) = {
-      val isGame = lila.rating.PerfType.isGame(perfType)
+    def showPerf(perf: lila.rating.Perf, perfType: PerfType) = {
+      val isPuzzle = perfType == lila.rating.PerfType.Puzzle
       a(
         dataIcon := perfType.iconChar,
-        title := perfType.title,
+        title := perfType.desc,
         cls := List(
           "empty"  -> perf.isEmpty,
-          "game"   -> isGame,
           "active" -> active.has(perfType)
         ),
-        href := isGame option routes.User.perfStat(u.username, perfType.key).url,
+        href := {
+          if (isPuzzle) ctx.is(u) option routes.Puzzle.dashboard(30, "home").url
+          else routes.User.perfStat(u.username, perfType.key).url.some
+        },
         span(
-          h3(name.getOrElse(perfType.name).toUpperCase),
+          h3(perfType.trans),
           st.rating(
-            strong(
-              perf.glicko.intRating,
-              perf.provisional option "?"
-            ),
+            if (perf.glicko.clueless) strong("?")
+            else
+              strong(
+                perf.glicko.intRating,
+                perf.provisional option "?"
+              ),
             " ",
             ratingProgress(perf.progress),
             " ",
@@ -51,12 +56,12 @@ object side {
             )
           }
         ),
-        isGame option iconTag("G")
+        iconTag("G")
       )
     }
 
     div(cls := "side sub-ratings")(
-      (!u.lame || ctx.is(u) || isGranted(_.UserSpy)) option frag(
+      (!u.lame || ctx.is(u) || isGranted(_.UserModView)) option frag(
         showNonEmptyPerf(u.perfs.ultraBullet, PerfType.UltraBullet),
         showPerf(u.perfs.bullet, PerfType.Bullet),
         showPerf(u.perfs.blitz, PerfType.Blitz),
@@ -73,8 +78,29 @@ object side {
         showNonEmptyPerf(u.perfs.horde, PerfType.Horde),
         showNonEmptyPerf(u.perfs.racingKings, PerfType.RacingKings),
         br,
-        u.noBot option showPerf(u.perfs.puzzle, PerfType.Puzzle)
+        u.noBot option showPerf(u.perfs.puzzle, PerfType.Puzzle),
+        u.noBot option showStorm(u.perfs.storm, u)
       )
     )
   }
+
+  private def showStorm(storm: lila.rating.Perf.Storm, user: User)(implicit lang: Lang) =
+    a(
+      dataIcon := '~',
+      cls := List(
+        "empty" -> !storm.nonEmpty
+      ),
+      href := routes.Storm.dashboardOf(user.username),
+      span(
+        h3("Puzzle Storm"),
+        st.rating(
+          strong(storm.score),
+          storm.nonEmpty option frag(
+            " ",
+            span(trans.storm.xRuns.plural(storm.runs, storm.runs.localize))
+          )
+        )
+      ),
+      iconTag("G")
+    )
 }

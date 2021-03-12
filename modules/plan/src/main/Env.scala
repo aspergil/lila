@@ -3,7 +3,7 @@ package lila.plan
 import com.softwaremill.macwire._
 import io.methvin.play.autoconfig._
 import play.api.Configuration
-import play.api.libs.ws.WSClient
+import play.api.libs.ws.StandaloneWSClient
 import scala.concurrent.duration._
 
 import lila.common.config._
@@ -19,7 +19,7 @@ private class PlanConfig(
 final class Env(
     appConfig: Configuration,
     db: lila.db.Db,
-    ws: WSClient,
+    ws: StandaloneWSClient,
     timeline: lila.hub.actors.Timeline,
     notifyApi: lila.notify.NotifyApi,
     cacheApi: lila.memo.CacheApi,
@@ -27,7 +27,10 @@ final class Env(
     lightUserApi: lila.user.LightUserApi,
     userRepo: lila.user.UserRepo,
     settingStore: lila.memo.SettingStore.Builder
-)(implicit ec: scala.concurrent.ExecutionContext, system: akka.actor.ActorSystem) {
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    system: akka.actor.ActorSystem
+) {
 
   import StripeClient.configLoader
   private val config = appConfig.get[PlanConfig]("plan")(AutoConfig.loader)
@@ -74,20 +77,21 @@ final class Env(
   )
 
   system.scheduler.scheduleWithFixedDelay(15 minutes, 15 minutes) { () =>
-    expiration.run
+    expiration.run.unit
   }
 
   def webhook = webhookHandler.apply _
 
-  def cli = new lila.common.Cli {
-    def process = {
-      case "patron" :: "lifetime" :: user :: Nil =>
-        userRepo named user flatMap { _ ?? api.setLifetime } inject "ok"
-      // someone donated while logged off.
-      // we cannot bind the charge to the user so they get their precious wings.
-      // instead, give them a free month.
-      case "patron" :: "month" :: user :: Nil =>
-        userRepo named user flatMap { _ ?? api.giveMonth } inject "ok"
+  def cli =
+    new lila.common.Cli {
+      def process = {
+        case "patron" :: "lifetime" :: user :: Nil =>
+          userRepo named user flatMap { _ ?? api.setLifetime } inject "ok"
+        // someone donated while logged off.
+        // we cannot bind the charge to the user so they get their precious wings.
+        // instead, give them a free month.
+        case "patron" :: "month" :: user :: Nil =>
+          userRepo named user flatMap { _ ?? api.giveMonth } inject "ok"
+      }
     }
-  }
 }

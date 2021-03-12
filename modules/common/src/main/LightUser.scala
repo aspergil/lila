@@ -1,6 +1,6 @@
 package lila.common
 
-import play.api.libs.json.{ Json, OWrites }
+import play.api.libs.json._
 
 case class LightUser(
     id: String,
@@ -19,21 +19,22 @@ object LightUser {
   private type UserID = String
 
   implicit val lightUserWrites = OWrites[LightUser] { u =>
-    Json
-      .obj(
-        "id"   -> u.id,
-        "name" -> u.name
-      )
-      .add("title" -> u.title)
-      .add("patron" -> u.isPatron)
+    writeNoId(u) + ("id" -> JsString(u.id))
   }
 
-  def fallback(userId: UserID) = LightUser(
-    id = userId,
-    name = userId,
-    title = None,
-    isPatron = false
-  )
+  def writeNoId(u: LightUser): JsObject =
+    Json
+      .obj("name" -> u.name)
+      .add("title" -> u.title)
+      .add("patron" -> u.isPatron)
+
+  def fallback(name: String) =
+    LightUser(
+      id = name.toLowerCase,
+      name = name,
+      title = None,
+      isPatron = false
+    )
 
   final class Getter(f: UserID => Fu[Option[LightUser]]) extends (UserID => Fu[Option[LightUser]]) {
     def apply(u: UserID) = f(u)

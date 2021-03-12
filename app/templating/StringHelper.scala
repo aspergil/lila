@@ -1,7 +1,8 @@
 package lila.app
 package templating
 
-import lila.user.UserContext
+import play.api.i18n.Lang
+
 import ui.ScalatagsTemplate._
 
 trait StringHelper { self: NumberHelper =>
@@ -16,12 +17,10 @@ trait StringHelper { self: NumberHelper =>
 
   def urlencode(str: String): String = java.net.URLEncoder.encode(str, "US-ASCII")
 
-  def when(cond: Boolean, str: String) = cond ?? str
-
   private val NumberFirstRegex = """(\d++)\s(.+)""".r
   private val NumberLastRegex  = """\s(\d++)$""".r.unanchored
 
-  def splitNumber(s: Frag)(implicit ctx: UserContext): Frag = {
+  def splitNumber(s: Frag)(implicit lang: Lang): Frag = {
     val rendered = s.render
     rendered match {
       case NumberFirstRegex(number, html) =>
@@ -45,14 +44,15 @@ trait StringHelper { self: NumberHelper =>
   def addQueryParameter(url: String, key: String, value: Any) =
     if (url contains "?") s"$url&$key=$value" else s"$url?$key=$value"
 
-  def fragList(frags: List[Frag], separator: String = ", "): Frag = frags match {
-    case Nil        => emptyFrag
-    case one :: Nil => one
-    case first :: rest =>
-      first :: rest.map { f =>
-        frag(separator, f)
-      }
-  }
+  def fragList(frags: List[Frag], separator: String = ", "): Frag =
+    frags match {
+      case Nil        => emptyFrag
+      case one :: Nil => one
+      case first :: rest =>
+        RawFrag(
+          frag(first :: rest.map { frag(separator, _) }).render
+        )
+    }
 
   implicit def lilaRichString(str: String): LilaRichString = new LilaRichString(str)
 }

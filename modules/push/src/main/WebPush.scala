@@ -2,18 +2,19 @@ package lila.push
 
 import io.methvin.play.autoconfig._
 import play.api.libs.json._
-import play.api.libs.ws.WSClient
-import scalaz.NonEmptyList
+import play.api.libs.ws.JsonBodyWritables._
+import play.api.libs.ws.StandaloneWSClient
+import cats.data.NonEmptyList
 
 import lila.user.User
 
 final private class WebPush(
     webSubscriptionApi: WebSubscriptionApi,
     config: WebPush.Config,
-    ws: WSClient
+    ws: StandaloneWSClient
 )(implicit ec: scala.concurrent.ExecutionContext) {
 
-  def apply(userId: User.ID)(data: => PushApi.Data): Funit =
+  def apply(userId: User.ID, data: => PushApi.Data): Funit =
     webSubscriptionApi.getSubscriptions(5)(userId) flatMap { subscriptions =>
       subscriptions.toNel ?? send(data)
     }

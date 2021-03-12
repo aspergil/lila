@@ -2,7 +2,7 @@ package lila.relay
 
 import org.joda.time.DateTime
 
-import lila.study.{ Study }
+import lila.study.Study
 import lila.user.User
 
 case class Relay(
@@ -34,19 +34,22 @@ case class Relay(
     if (s.isEmpty) "-" else s
   }
 
-  def finish = copy(
-    finished = true,
-    sync = sync.pause
-  )
+  def finish =
+    copy(
+      finished = true,
+      sync = sync.pause
+    )
 
-  def resume = copy(
-    finished = false,
-    sync = sync.play
-  )
+  def resume =
+    copy(
+      finished = false,
+      sync = sync.play
+    )
 
-  def ensureStarted = copy(
-    startedAt = startedAt orElse DateTime.now.some
-  )
+  def ensureStarted =
+    copy(
+      startedAt = startedAt orElse DateTime.now.some
+    )
 
   def hasStarted = startedAt.isDefined
 
@@ -65,7 +68,7 @@ object Relay {
 
   case class Id(value: String) extends AnyVal with StringValue
 
-  def makeId = Id(ornicar.scalalib.Random nextString 8)
+  def makeId = Id(lila.common.ThreadLocalRandom nextString 8)
 
   case class Sync(
       upstream: Option[Sync.Upstream], // if empty, needs a client to push PGN
@@ -87,10 +90,11 @@ object Relay {
       if (hasUpstream) renew.copy(nextAt = nextAt orElse DateTime.now.plusSeconds(3).some)
       else pause
 
-    def pause = copy(
-      nextAt = none,
-      until = none
-    )
+    def pause =
+      copy(
+        nextAt = none,
+        until = none
+      )
 
     def seconds: Option[Int] =
       until map { u =>
@@ -107,15 +111,26 @@ object Relay {
   }
 
   object Sync {
-    case class Upstream(url: String) extends AnyVal {
-      def isLocal = url.contains("://127.0.0.1") || url.contains("://localhost")
-      def withRound = url.split(" ", 2) match {
-        case Array(u, round) => UpstreamWithRound(u, round.toIntOption)
-        case _               => UpstreamWithRound(url, none)
+    sealed trait Upstream {
+      def asUrl: Option[UpstreamUrl] = this match {
+        case url: UpstreamUrl => url.some
+        case _                => none
       }
+      def local = asUrl.fold(true)(_.isLocal)
     }
-    case class UpstreamWithRound(url: String, round: Option[Int])
-    val LccRegex = """.*view\.livechesscloud\.com/#?([0-9a-f\-]+)""".r
+    case class UpstreamUrl(url: String) extends Upstream {
+      def isLocal = url.contains("://127.0.0.1") || url.contains("://localhost")
+      def withRound =
+        url.split(" ", 2) match {
+          case Array(u, round) => UpstreamUrl.WithRound(u, round.toIntOption)
+          case _               => UpstreamUrl.WithRound(url, none)
+        }
+    }
+    object UpstreamUrl {
+      case class WithRound(url: String, round: Option[Int])
+      val LccRegex = """.*view\.livechesscloud\.com/#?([0-9a-f\-]+)""".r
+    }
+    case class UpstreamIds(ids: List[lila.game.Game.ID]) extends Upstream
   }
 
   case class WithStudy(relay: Relay, study: Study)

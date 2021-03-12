@@ -1,5 +1,5 @@
 import { init } from 'snabbdom';
-import { VNode } from 'snabbdom/vnode'
+import { VNode } from 'snabbdom/vnode';
 import klass from 'snabbdom/modules/class';
 import attributes from 'snabbdom/modules/attributes';
 import { Chessground } from 'chessground';
@@ -10,10 +10,8 @@ export const patch = init([klass, attributes]);
 
 import makeCtrl from './ctrl';
 import view from './view/main';
-import boot = require('./boot');
 
-export function start(opts: LobbyOpts) {
-
+export default function main(opts: LobbyOpts) {
   let vnode: VNode, ctrl: LobbyController;
 
   function redraw() {
@@ -36,14 +34,11 @@ export function start(opts: LobbyOpts) {
     setRedirecting: ctrl.setRedirecting,
     enterPool: ctrl.enterPool,
     leavePool: ctrl.leavePool,
-    redraw: ctrl.redraw
+    setup: ctrl.setup,
+    redraw: ctrl.redraw,
   };
 }
 
 // that's for the rest of lichess to access chessground
 // without having to include it a second time
 window.Chessground = Chessground;
-
-window.onload = function() {
-  boot(window['lichess_lobby'], document.querySelector('.lobby__app'));
-};

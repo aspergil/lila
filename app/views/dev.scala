@@ -24,12 +24,22 @@ object dev {
           settings.map { s =>
             postForm(action := routes.Dev.settingsPost(s.id))(
               p(s.text | s.id),
-              input(name := "v", value := (s.form.value match {
-                case None    => ""
-                case Some(x) => x.toString
-                case x       => x.toString
-              })),
-              submitButton(cls := "button", dataIcon := "E")
+              s.form.value match {
+                case Some(v: Boolean) =>
+                  div(
+                    span(cls := "form-check-input")(form3.cmnToggle(s.id, "v", v))
+                  )
+                case v =>
+                  input(
+                    name := "v",
+                    value := (v match {
+                      case None    => ""
+                      case Some(x) => x.toString
+                      case x       => x.toString
+                    })
+                  )
+              },
+              submitButton(cls := "button button-empty", dataIcon := "E")
             )
           }
         )
@@ -52,10 +62,7 @@ object dev {
             br,
             "Only use if you know exactly what you're doing."
           ),
-          res.map { r =>
-            h2("Result:")
-            pre(r)
-          },
+          res map { pre(_) },
           postForm(action := routes.Dev.cliPost)(
             form3.input(form("command"))(autofocus)
           ),
@@ -67,11 +74,14 @@ change asset version
 puzzle disable 70000
 team disable foobar
 team enable foobar
-fishnet client create {username} analysis
+fishnet client create {username}
 gdpr erase {username} forever
 patron lifetime {username}
 patron month {username}
-eval-cache drop 8/8/1k6/8/2K5/1P6/8/8 w - - 0 1""")
+tournament feature {id}
+tournament unfeature {id}
+eval-cache drop standard 8/8/1k6/8/2K5/1P6/8/8 w - - 0 1
+""")
         )
       )
     }

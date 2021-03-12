@@ -1,17 +1,17 @@
 package lila.study
 
-import scala.concurrent.duration._
-
 import actorApi.Who
+import akka.stream.scaladsl._
 import chess.Centis
 import chess.format.pgn.{ Glyph, Tags }
+import scala.concurrent.duration._
+
 import lila.chat.{ Chat, ChatApi }
 import lila.common.Bus
-import lila.memo.CacheApi._
 import lila.hub.actorApi.timeline.{ Propagate, StudyCreate, StudyLike }
 import lila.socket.Socket.Sri
 import lila.tree.Node.{ Comment, Gamebook, Shapes }
-import lila.user.User
+import lila.user.{ Holder, User }
 
 final class StudyApi(
     studyRepo: StudyRepo,
@@ -21,13 +21,16 @@ final class StudyApi(
     chapterMaker: ChapterMaker,
     inviter: StudyInvite,
     explorerGameHandler: ExplorerGame,
+    topicApi: StudyTopicApi,
     lightUserApi: lila.user.LightUserApi,
     scheduler: akka.actor.Scheduler,
     chatApi: ChatApi,
     timeline: lila.hub.actors.Timeline,
-    serverEvalRequester: ServerEval.Requester,
-    lightStudyCache: LightStudyCache
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    serverEvalRequester: ServerEval.Requester
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    mat: akka.stream.Materializer
+) {
 
   import sequencer._
 
@@ -39,43 +42,47 @@ final class StudyApi(
 
   def publicByIds(ids: Seq[Study.Id]) = byIds(ids) map { _.filter(_.isPublic) }
 
-  def byIdAndOwner(id: Study.Id, owner: User) = byId(id) map {
-    _.filter(_ isOwner owner.id)
-  }
+  def byIdAndOwner(id: Study.Id, owner: User) =
+    byId(id) map {
+      _.filter(_ isOwner owner.id)
+    }
 
   def isOwner(id: Study.Id, owner: User) = byIdAndOwner(id, owner).map(_.isDefined)
 
-  def byIdWithChapter(id: Study.Id): Fu[Option[Study.WithChapter]] = byId(id) flatMap {
-    _ ?? { study =>
-      chapterRepo byId study.position.chapterId flatMap {
-        case None =>
-          chapterRepo firstByStudy study.id flatMap {
-            case None => fixNoChapter(study)
-            case Some(chapter) =>
-              val fixed = study withChapter chapter
-              studyRepo updateSomeFields fixed inject
-                Study.WithChapter(fixed, chapter).some
-          }
-        case Some(chapter) => fuccess(Study.WithChapter(study, chapter).some)
+  def byIdWithChapter(id: Study.Id): Fu[Option[Study.WithChapter]] =
+    byId(id) flatMap {
+      _ ?? { study =>
+        chapterRepo byId study.position.chapterId flatMap {
+          case None =>
+            chapterRepo firstByStudy study.id flatMap {
+              case None => fixNoChapter(study)
+              case Some(chapter) =>
+                val fixed = study withChapter chapter
+                studyRepo updateSomeFields fixed inject
+                  Study.WithChapter(fixed, chapter).some
+            }
+          case Some(chapter) => fuccess(Study.WithChapter(study, chapter).some)
+        }
       }
     }
-  }
 
-  def byIdWithChapter(id: Study.Id, chapterId: Chapter.Id): Fu[Option[Study.WithChapter]] = byId(id) flatMap {
-    _ ?? { study =>
-      chapterRepo byId chapterId map {
-        _.filter(_.studyId == study.id) map { Study.WithChapter(study, _) }
-      } orElse byIdWithChapter(id)
+  def byIdWithChapter(id: Study.Id, chapterId: Chapter.Id): Fu[Option[Study.WithChapter]] =
+    byId(id) flatMap {
+      _ ?? { study =>
+        chapterRepo byId chapterId map {
+          _.filter(_.studyId == study.id) map { Study.WithChapter(study, _) }
+        } orElse byIdWithChapter(id)
+      }
     }
-  }
 
-  def byIdWithFirstChapter(id: Study.Id): Fu[Option[Study.WithChapter]] = byId(id) flatMap {
-    _ ?? { study =>
-      chapterRepo.firstByStudy(study.id) map {
-        _ ?? { Study.WithChapter(study, _).some }
-      } orElse byIdWithChapter(id)
+  def byIdWithFirstChapter(id: Study.Id): Fu[Option[Study.WithChapter]] =
+    byId(id) flatMap {
+      _ ?? { study =>
+        chapterRepo.firstByStudy(study.id) map {
+          _ ?? { Study.WithChapter(study, _).some }
+        } orElse byIdWithChapter(id)
+      }
     }
-  }
 
   private def fixNoChapter(study: Study): Fu[Option[Study.WithChapter]] =
     sequenceStudy(study.id) { study =>
@@ -97,14 +104,14 @@ final class StudyApi(
 
   def importGame(data: StudyMaker.ImportGame, user: User): Fu[Option[Study.WithChapter]] =
     (data.form.as match {
-      case DataForm.importGame.AsNewStudy =>
+      case StudyForm.importGame.AsNewStudy =>
         studyMaker(data, user) flatMap { res =>
           studyRepo.insert(res.study) >>
             chapterRepo.insert(res.chapter) >>-
             indexStudy(res.study) >>-
             scheduleTimeline(res.study.id) inject res.some
         }
-      case DataForm.importGame.AsChapterOf(studyId) =>
+      case StudyForm.importGame.AsChapterOf(studyId) =>
         byId(studyId) flatMap {
           case Some(study) if study.canContribute(user.id) =>
             addChapter(
@@ -122,68 +129,81 @@ final class StudyApi(
 
   def clone(me: User, prev: Study): Fu[Option[Study]] =
     Settings.UserSelection.allows(prev.settings.cloneable, prev, me.id.some) ?? {
-      chapterRepo.orderedByStudy(prev.id).flatMap { chapters =>
-        val study1      = prev.cloneFor(me)
-        val newChapters = chapters.map(_ cloneFor study1)
-        newChapters.headOption.map(study1.rewindTo) ?? { study =>
+      val study1 = prev.cloneFor(me)
+      chapterRepo
+        .orderedByStudySource(prev.id)
+        .map(_ cloneFor study1)
+        .mapAsync(4) { c =>
+          chapterRepo.insert(c) inject c
+        }
+        .toMat(Sink.reduce[Chapter] { case (prev, _) => prev })(Keep.right)
+        .run()
+        .flatMap { (first: Chapter) =>
+          val study = study1 rewindTo first
           studyRepo.insert(study) >>
-            newChapters.map(chapterRepo.insert).sequenceFu >>- {
             chatApi.userChat.system(
               Chat.Id(study.id.value),
-              s"Cloned from lichess.org/study/${prev.id}"
-            )
-          } inject study.some
+              s"Cloned from lichess.org/study/${prev.id}",
+              _.Study
+            ) inject study.some
         }
-      }
     }
 
   def resetIfOld(study: Study, chapters: List[Chapter.Metadata]): Fu[(Study, Option[Chapter])] =
     chapters.headOption match {
       case Some(c) if study.isOld && study.position != c.initialPosition =>
         val newStudy = study rewindTo c
-        studyRepo.updateSomeFields(newStudy) zip chapterRepo.byId(c.id) map {
-          case (_, chapter) => newStudy -> chapter
+        studyRepo.updateSomeFields(newStudy) zip chapterRepo.byId(c.id) map { case (_, chapter) =>
+          newStudy -> chapter
         }
       case _ => fuccess(study -> none)
     }
 
-  private def scheduleTimeline(studyId: Study.Id) = scheduler.scheduleOnce(1 minute) {
-    byId(studyId) foreach {
-      _.filter(_.isPublic) foreach { study =>
-        timeline ! (Propagate(StudyCreate(study.ownerId, study.id.value, study.name.value)) toFollowersOf study.ownerId)
-      }
-    }
-  }
-
-  def talk(userId: User.ID, studyId: Study.Id, text: String) = byId(studyId) foreach {
-    _ foreach { study =>
-      (study canChat userId) ?? {
-        chatApi.userChat.write(
-          Chat.Id(studyId.value),
-          userId = userId,
-          text = text,
-          publicSource = lila.hub.actorApi.shutup.PublicSource.Study(studyId.value).some
-        )
-      }
-    }
-  }
-
-  def setPath(studyId: Study.Id, position: Position.Ref)(who: Who): Funit = sequenceStudy(studyId) { study =>
-    Contribute(who.u, study) {
-      chapterRepo.byId(position.chapterId).map {
-        _ filter { c =>
-          c.root.pathExists(position.path) && study.position.chapterId == c.id
+  private def scheduleTimeline(studyId: Study.Id): Unit =
+    scheduler
+      .scheduleOnce(1 minute) {
+        byId(studyId) foreach {
+          _.withFilter(_.isPublic) foreach { study =>
+            timeline ! (Propagate(
+              StudyCreate(study.ownerId, study.id.value, study.name.value)
+            ) toFollowersOf study.ownerId)
+          }
         }
-      } flatMap {
-        case None => funit >>- sendTo(study.id)(_.reloadSri(who.sri))
-        case Some(chapter) if study.position.path != position.path =>
-          studyRepo.setPosition(study.id, position) >>
-            updateConceal(study, chapter, position) >>-
-            sendTo(study.id)(_.setPath(position, who))
-        case _ => funit
+      }
+      .unit
+
+  def talk(userId: User.ID, studyId: Study.Id, text: String) =
+    byId(studyId) foreach {
+      _ foreach { study =>
+        (study canChat userId) ?? {
+          chatApi.userChat.write(
+            Chat.Id(studyId.value),
+            userId = userId,
+            text = text,
+            publicSource = lila.hub.actorApi.shutup.PublicSource.Study(studyId.value).some,
+            busChan = _.Study
+          )
+        }
       }
     }
-  }
+
+  def setPath(studyId: Study.Id, position: Position.Ref)(who: Who): Funit =
+    sequenceStudy(studyId) { study =>
+      Contribute(who.u, study) {
+        chapterRepo.byId(position.chapterId).map {
+          _ filter { c =>
+            c.root.pathExists(position.path) && study.position.chapterId == c.id
+          }
+        } flatMap {
+          case None => funit >>- sendTo(study.id)(_.reloadSri(who.sri))
+          case Some(chapter) if study.position.path != position.path =>
+            studyRepo.setPosition(study.id, position) >>
+              updateConceal(study, chapter, position) >>-
+              sendTo(study.id)(_.setPath(position, who))
+          case _ => funit
+        }
+      }
+    }
 
   def addNode(
       studyId: Study.Id,
@@ -192,11 +212,10 @@ final class StudyApi(
       opts: MoveOpts,
       relay: Option[Chapter.Relay] = None
   )(who: Who) =
-    sequenceStudyWithChapter(studyId, position.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          doAddNode(study, Position(chapter, position.path), node, opts, relay)(who).void
-        }
+    sequenceStudyWithChapter(studyId, position.chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        doAddNode(study, Position(chapter, position.path), node, opts, relay)(who).void
+      }
     }
 
   private def doAddNode(
@@ -210,33 +229,32 @@ final class StudyApi(
     def failReload() = reloadSriBecauseOf(study, who.sri, position.chapter.id)
     if (position.chapter.isOverweight) {
       logger.info(s"Overweight chapter ${study.id}/${position.chapter.id}")
-      fuccess(failReload)
+      fuccess(failReload())
     } else
       position.chapter.addNode(node, position.path, relay) match {
         case None =>
-          failReload
+          failReload()
           fufail(s"Invalid addNode ${study.id} ${position.ref} $node")
         case Some(chapter) =>
           chapter.root.nodeAt(position.path) ?? { parent =>
             val newPosition = position.ref + node
-            chapterRepo.setChildren(parent.children)(chapter, position.path) >>
+            chapterRepo.addSubTree(node, parent addChild node, position.path)(chapter) >>
               (relay ?? { chapterRepo.setRelay(chapter.id, _) }) >>
               (opts.sticky ?? studyRepo.setPosition(study.id, newPosition)) >>
-              updateConceal(study, chapter, newPosition) >>- {
-              sendTo(study.id)(
-                _.addNode(
-                  position.ref,
-                  node,
-                  chapter.setup.variant,
-                  sticky = opts.sticky,
-                  relay = relay,
-                  who
+              updateConceal(study, chapter, newPosition) >> {
+                sendTo(study.id)(
+                  _.addNode(
+                    position.ref,
+                    node,
+                    chapter.setup.variant,
+                    sticky = opts.sticky,
+                    relay = relay,
+                    who
+                  )
                 )
-              )
-              sendStudyEnters(study, who.u)
-              if (opts.promoteToMainline && !Path.isMainline(chapter.root, newPosition.path))
-                promote(study.id, position.ref + node, toMainline = true)(who)
-            }
+                (opts.promoteToMainline && !Path.isMainline(chapter.root, newPosition.path)) ??
+                  promote(study.id, position.ref + node, toMainline = true)(who)
+              }
           }
       }
   }
@@ -254,60 +272,58 @@ final class StudyApi(
     }
 
   def deleteNodeAt(studyId: Study.Id, position: Position.Ref)(who: Who) =
-    sequenceStudyWithChapter(studyId, position.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          chapter.updateRoot { root =>
-            root.withChildren(_.deleteNodeAt(position.path))
-          } match {
-            case Some(newChapter) =>
-              chapterRepo.update(newChapter) >>-
-                sendTo(study.id)(_.deleteNode(position, who))
-            case None =>
-              fufail(s"Invalid delNode $studyId $position") >>-
-                reloadSriBecauseOf(study, who.sri, chapter.id)
-          }
+    sequenceStudyWithChapter(studyId, position.chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        chapter.updateRoot { root =>
+          root.withChildren(_.deleteNodeAt(position.path))
+        } match {
+          case Some(newChapter) =>
+            chapterRepo.update(newChapter) >>-
+              sendTo(study.id)(_.deleteNode(position, who))
+          case None =>
+            fufail(s"Invalid delNode $studyId $position") >>-
+              reloadSriBecauseOf(study, who.sri, chapter.id)
         }
+      }
     }
 
   def clearAnnotations(studyId: Study.Id, chapterId: Chapter.Id)(who: Who) =
-    sequenceStudyWithChapter(studyId, chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          chapterRepo.update(chapter.updateRoot { root =>
-            root.withChildren(_.updateAllWith(_.clearAnnotations).some)
-          } | chapter) >>- sendTo(study.id)(_.updateChapter(chapter.id, who))
-        }
+    sequenceStudyWithChapter(studyId, chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        chapterRepo.update(chapter.updateRoot { root =>
+          root.withChildren(_.updateAllWith(_.clearAnnotations).some)
+        } | chapter) >>- sendTo(study.id)(_.updateChapter(chapter.id, who))
+      }
     }
 
-  def promote(studyId: Study.Id, position: Position.Ref, toMainline: Boolean)(who: Who) =
-    sequenceStudyWithChapter(studyId, position.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          chapter.updateRoot { root =>
-            root.withChildren { children =>
-              if (toMainline) children.promoteToMainlineAt(position.path)
-              else children.promoteUpAt(position.path).map(_._1)
-            }
-          } match {
-            case Some(newChapter) =>
-              chapterRepo.update(newChapter) >>-
-                sendTo(study.id)(_.promote(position, toMainline, who)) >>
-                newChapter.root.children
-                  .nodesOn {
-                    newChapter.root.mainlinePath.intersect(position.path)
-                  }
-                  .collect {
-                    case (node, path) if node.forceVariation =>
-                      doForceVariation(Study.WithChapter(study, newChapter), path, false, who)
-                  }
-                  .sequenceFu
-                  .void
-            case None =>
-              fufail(s"Invalid promoteToMainline $studyId $position") >>-
-                reloadSriBecauseOf(study, who.sri, chapter.id)
+  // rewrites the whole chapter because of `forceVariation`. Very inefficient.
+  def promote(studyId: Study.Id, position: Position.Ref, toMainline: Boolean)(who: Who): Funit =
+    sequenceStudyWithChapter(studyId, position.chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        chapter.updateRoot { root =>
+          root.withChildren { children =>
+            if (toMainline) children.promoteToMainlineAt(position.path)
+            else children.promoteUpAt(position.path).map(_._1)
           }
+        } match {
+          case Some(newChapter) =>
+            chapterRepo.update(newChapter) >>-
+              sendTo(study.id)(_.promote(position, toMainline, who)) >>
+              newChapter.root.children
+                .nodesOn {
+                  newChapter.root.mainlinePath.intersect(position.path)
+                }
+                .collect {
+                  case (node, path) if node.forceVariation =>
+                    doForceVariation(Study.WithChapter(study, newChapter), path, force = false, who)
+                }
+                .sequenceFu
+                .void
+          case None =>
+            fufail(s"Invalid promoteToMainline $studyId $position") >>-
+              reloadSriBecauseOf(study, who.sri, chapter.id)
         }
+      }
     }
 
   def forceVariation(studyId: Study.Id, position: Position.Ref, force: Boolean)(who: Who): Funit =
@@ -327,20 +343,16 @@ final class StudyApi(
           reloadSriBecauseOf(sc.study, who.sri, sc.chapter.id)
     }
 
-  def setRole(studyId: Study.Id, userId: User.ID, roleStr: String)(who: Who) = sequenceStudy(studyId) {
-    study =>
-      (study isOwner who.u) ?? {
-        val role = StudyMember.Role.byId.getOrElse(roleStr, StudyMember.Role.Read)
-        study.members.get(userId) ifTrue study.isPublic foreach { member =>
-          if (!member.role.canWrite && role.canWrite)
-            Bus.publish(lila.hub.actorApi.study.StudyMemberGotWriteAccess(userId, studyId.value), "study")
-          else if (member.role.canWrite && !role.canWrite)
-            Bus.publish(lila.hub.actorApi.study.StudyMemberLostWriteAccess(userId, studyId.value), "study")
+  def setRole(studyId: Study.Id, userId: User.ID, roleStr: String)(who: Who) =
+    sequenceStudy(studyId) { study =>
+      canActAsOwner(study, who.u) flatMap {
+        _ ?? {
+          val role    = StudyMember.Role.byId.getOrElse(roleStr, StudyMember.Role.Read)
+          val members = study.members.update(userId, _.copy(role = role))
+          studyRepo.setRole(study, userId, role) >>- onMembersChange(study, members, members.ids)
         }
-        studyRepo.setRole(study, userId, role) >>-
-          onMembersChange(study)
       }
-  }
+    }
 
   def invite(
       byUserId: User.ID,
@@ -348,31 +360,41 @@ final class StudyApi(
       username: String,
       isPresent: User.ID => Fu[Boolean],
       onError: String => Unit
-  ) = sequenceStudy(studyId) { study =>
-    inviter(byUserId, study, username, isPresent).addEffects(
-      err => onError(err.getMessage),
-      _ => onMembersChange(study)
-    )
-  }
+  ) =
+    sequenceStudy(studyId) { study =>
+      inviter(byUserId, study, username, isPresent)
+        .addEffects(
+          err => onError(err.getMessage),
+          user => {
+            val members = study.members + StudyMember.make(user)
+            onMembersChange(study, members, members.ids)
+          }
+        )
+        .void
+    }
 
-  def kick(studyId: Study.Id, userId: User.ID)(who: Who) = sequenceStudy(studyId) { study =>
-    (study.isMember(userId) && (study.isOwner(who.u) ^ (who.u == userId))) ?? {
-      if (study.isPublic && study.canContribute(userId))
-        Bus.publish(lila.hub.actorApi.study.StudyMemberLostWriteAccess(userId, studyId.value), "study")
-      studyRepo.removeMember(study, userId)
-    } >>- onMembersChange(study)
-  }
+  def kick(studyId: Study.Id, userId: User.ID)(who: Who) =
+    sequenceStudy(studyId) { study =>
+      studyRepo.isAdminMember(study, who.u) flatMap { isAdmin =>
+        val allowed = study.isMember(userId) && {
+          (isAdmin && !study.isOwner(userId)) || (study.isOwner(who.u) ^ (who.u == userId))
+        }
+        allowed ?? {
+          studyRepo.removeMember(study, userId) >>-
+            onMembersChange(study, (study.members - userId), study.members.ids)
+        }
+      }
+    }
 
   def isContributor = studyRepo.isContributor _
   def isMember      = studyRepo.isMember _
 
-  private def onMembersChange(study: Study) = {
-    lightStudyCache.invalidate(study.id)
-    studyRepo.membersById(study.id).foreach {
-      _ foreach { members =>
-        sendTo(study.id)(_.reloadMembers(members))
-      }
-    }
+  private def onMembersChange(
+      study: Study,
+      members: StudyMembers,
+      sendToUserIds: Iterable[User.ID]
+  ): Unit = {
+    sendTo(study.id)(_.reloadMembers(members, sendToUserIds))
     indexStudy(study)
   }
 
@@ -396,32 +418,36 @@ final class StudyApi(
     }
 
   def setClock(studyId: Study.Id, position: Position.Ref, clock: Option[Centis])(who: Who): Funit =
-    sequenceStudyWithChapter(studyId, position.chapterId) { sc =>
-      sc.chapter.setClock(clock, position.path) match {
-        case Some(newChapter) =>
-          studyRepo.updateNow(sc.study)
-          chapterRepo.setClock(clock)(newChapter, position.path) >>-
-            sendTo(sc.study.id)(_.setClock(position, clock, who))
-        case None =>
-          fufail(s"Invalid setClock $position $clock") >>-
-            reloadSriBecauseOf(sc.study, who.sri, position.chapterId)
-      }
+    sequenceStudyWithChapter(studyId, position.chapterId) {
+      doSetClock(_, position, clock)(who)
+    }
+
+  private def doSetClock(sc: Study.WithChapter, position: Position.Ref, clock: Option[Centis])(
+      who: Who
+  ): Funit =
+    sc.chapter.setClock(clock, position.path) match {
+      case Some(newChapter) =>
+        studyRepo.updateNow(sc.study)
+        chapterRepo.setClock(clock)(newChapter, position.path) >>-
+          sendTo(sc.study.id)(_.setClock(position, clock, who))
+      case None =>
+        fufail(s"Invalid setClock $position $clock") >>-
+          reloadSriBecauseOf(sc.study, who.sri, position.chapterId)
     }
 
   def setTag(studyId: Study.Id, setTag: actorApi.SetTag)(who: Who) =
-    sequenceStudyWithChapter(studyId, setTag.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          doSetTags(study, chapter, PgnTags(chapter.tags + setTag.tag), who)
-        }
+    sequenceStudyWithChapter(studyId, setTag.chapterId) { case Study.WithChapter(study, chapter) =>
+      logger.info(s"setTag $studyId $setTag")
+      Contribute(who.u, study) {
+        doSetTags(study, chapter, PgnTags(chapter.tags + setTag.tag), who)
+      }
     }
 
   def setTags(studyId: Study.Id, chapterId: Chapter.Id, tags: Tags)(who: Who) =
-    sequenceStudyWithChapter(studyId, chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          doSetTags(study, chapter, tags, who)
-        }
+    sequenceStudyWithChapter(studyId, chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        doSetTags(study, chapter, tags, who)
+      }
     }
 
   private def doSetTags(study: Study, oldChapter: Chapter, tags: Tags, who: Who): Funit = {
@@ -429,7 +455,7 @@ final class StudyApi(
     (chapter.tags != oldChapter.tags) ?? {
       chapterRepo.setTagsFor(chapter) >> {
         PgnTags.setRootClockFromTags(chapter) ?? { c =>
-          setClock(study.id, Position(c, Path.root).ref, c.root.clock)(who)
+          doSetClock(Study.WithChapter(study, c), Position(c, Path.root).ref, c.root.clock)(who)
         }
       } >>-
         sendTo(study.id)(_.setTags(chapter.id, chapter.tags, who))
@@ -437,20 +463,19 @@ final class StudyApi(
   }
 
   def setComment(studyId: Study.Id, position: Position.Ref, text: Comment.Text)(who: Who) =
-    sequenceStudyWithChapter(studyId, position.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          lightUserApi.async(who.u) flatMap {
-            _ ?? { author =>
-              val comment = Comment(
-                id = Comment.Id.make,
-                text = text,
-                by = Comment.Author.User(author.id, author.titleName)
-              )
-              doSetComment(study, Position(chapter, position.path), comment, who)
-            }
+    sequenceStudyWithChapter(studyId, position.chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        lightUserApi.async(who.u) flatMap {
+          _ ?? { author =>
+            val comment = Comment(
+              id = Comment.Id.make,
+              text = text,
+              by = Comment.Author.User(author.id, author.titleName)
+            )
+            doSetComment(study, Position(chapter, position.path), comment, who)
           }
         }
+      }
     }
 
   private def doSetComment(study: Study, position: Position, comment: Comment, who: Who): Funit =
@@ -462,7 +487,6 @@ final class StudyApi(
             chapterRepo.setComments(node.comments.filterEmpty)(newChapter, position.path) >>- {
               sendTo(study.id)(_.setComment(position.ref, c, who))
               indexStudy(study)
-              sendStudyEnters(study, who.u)
             }
           }
         }
@@ -472,107 +496,112 @@ final class StudyApi(
     }
 
   def deleteComment(studyId: Study.Id, position: Position.Ref, id: Comment.Id)(who: Who) =
-    sequenceStudyWithChapter(studyId, position.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          chapter.deleteComment(id, position.path) match {
-            case Some(newChapter) =>
-              chapterRepo.update(newChapter) >>-
-                sendTo(study.id)(_.deleteComment(position, id, who)) >>-
-                indexStudy(study)
-            case None =>
-              fufail(s"Invalid deleteComment $studyId $position $id") >>-
-                reloadSriBecauseOf(study, who.sri, chapter.id)
-          }
+    sequenceStudyWithChapter(studyId, position.chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        chapter.deleteComment(id, position.path) match {
+          case Some(newChapter) =>
+            chapterRepo.update(newChapter) >>-
+              sendTo(study.id)(_.deleteComment(position, id, who)) >>-
+              indexStudy(study)
+          case None =>
+            fufail(s"Invalid deleteComment $studyId $position $id") >>-
+              reloadSriBecauseOf(study, who.sri, chapter.id)
         }
+      }
     }
 
   def toggleGlyph(studyId: Study.Id, position: Position.Ref, glyph: Glyph)(who: Who) =
-    sequenceStudyWithChapter(studyId, position.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          chapter.toggleGlyph(glyph, position.path) match {
-            case Some(newChapter) =>
-              studyRepo.updateNow(study)
-              newChapter.root.nodeAt(position.path) ?? { node =>
-                chapterRepo.setGlyphs(node.glyphs)(newChapter, position.path) >>-
-                  newChapter.root.nodeAt(position.path).foreach { node =>
-                    sendTo(study.id)(_.setGlyphs(position, node.glyphs, who))
-                  }
-              }
-            case None =>
-              fufail(s"Invalid toggleGlyph $studyId $position $glyph") >>-
-                reloadSriBecauseOf(study, who.sri, chapter.id)
-          }
+    sequenceStudyWithChapter(studyId, position.chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        chapter.toggleGlyph(glyph, position.path) match {
+          case Some(newChapter) =>
+            studyRepo.updateNow(study)
+            newChapter.root.nodeAt(position.path) ?? { node =>
+              chapterRepo.setGlyphs(node.glyphs)(newChapter, position.path) >>-
+                newChapter.root.nodeAt(position.path).foreach { node =>
+                  sendTo(study.id)(_.setGlyphs(position, node.glyphs, who))
+                }
+            }
+          case None =>
+            fufail(s"Invalid toggleGlyph $studyId $position $glyph") >>-
+              reloadSriBecauseOf(study, who.sri, chapter.id)
         }
+      }
     }
 
   def setGamebook(studyId: Study.Id, position: Position.Ref, gamebook: Gamebook)(who: Who) =
-    sequenceStudyWithChapter(studyId, position.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          chapter.setGamebook(gamebook, position.path) match {
-            case Some(newChapter) =>
-              studyRepo.updateNow(study)
-              chapterRepo.setGamebook(gamebook)(newChapter, position.path) >>- {
-                indexStudy(study)
-                sendStudyEnters(study, who.u)
-              }
+    sequenceStudyWithChapter(studyId, position.chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        chapter.setGamebook(gamebook, position.path) match {
+          case Some(newChapter) =>
+            studyRepo.updateNow(study)
+            chapterRepo.setGamebook(gamebook)(newChapter, position.path) >>-
+              indexStudy(study)
+          case None =>
+            fufail(s"Invalid setGamebook $studyId $position") >>-
+              reloadSriBecauseOf(study, who.sri, chapter.id)
+        }
+      }
+    }
+
+  def explorerGame(studyId: Study.Id, data: actorApi.ExplorerGame)(who: Who) =
+    sequenceStudyWithChapter(studyId, data.position.chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(who.u, study) {
+        if (data.insert)
+          explorerGameHandler.insert(study, Position(chapter, data.position.path), data.gameId) flatMap {
             case None =>
-              fufail(s"Invalid setGamebook $studyId $position") >>-
+              fufail(s"Invalid explorerGame insert $studyId $data") >>-
                 reloadSriBecauseOf(study, who.sri, chapter.id)
+            case Some((chapter, path)) =>
+              studyRepo.updateNow(study)
+              chapter.root.nodeAt(path) ?? { parent =>
+                chapterRepo.setChildren(parent.children)(chapter, path) >>-
+                  sendTo(study.id)(_.reloadAll)
+              }
+          }
+        else
+          explorerGameHandler.quote(data.gameId) flatMap {
+            _ ?? {
+              doSetComment(study, Position(chapter, data.position.path), _, who)
+            }
+          }
+      }
+    }
+
+  def addChapter(studyId: Study.Id, data: ChapterMaker.Data, sticky: Boolean)(who: Who): Funit =
+    data.manyGames match {
+      case Some(datas) =>
+        lila.common.Future.applySequentially(datas) { data =>
+          addChapter(studyId, data, sticky)(who)
+        }
+      case _ =>
+        sequenceStudy(studyId) { study =>
+          Contribute(who.u, study) {
+            chapterRepo.countByStudyId(study.id) flatMap { count =>
+              if (count >= Study.maxChapters) funit
+              else
+                chapterRepo.nextOrderByStudy(study.id) flatMap { order =>
+                  chapterMaker(study, data, order, who.u) flatMap { chapter =>
+                    data.initial ?? {
+                      chapterRepo.firstByStudy(study.id) flatMap {
+                        _.filter(_.isEmptyInitial) ?? chapterRepo.delete
+                      }
+                    } >> doAddChapter(study, chapter, sticky, who)
+                  } addFailureEffect {
+                    case ChapterMaker.ValidationException(error) =>
+                      sendTo(study.id)(_.validationError(error, who.sri))
+                    case u => logger.error(s"StudyApi.addChapter to $studyId", u)
+                  }
+                }
+            }
           }
         }
     }
 
-  def explorerGame(studyId: Study.Id, data: actorApi.ExplorerGame)(who: Who) =
-    sequenceStudyWithChapter(studyId, data.position.chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(who.u, study) {
-          if (data.insert)
-            explorerGameHandler.insert(study, Position(chapter, data.position.path), data.gameId) flatMap {
-              case None =>
-                fufail(s"Invalid explorerGame insert $studyId $data") >>-
-                  reloadSriBecauseOf(study, who.sri, chapter.id)
-              case Some((chapter, path)) =>
-                studyRepo.updateNow(study)
-                chapter.root.nodeAt(path) ?? { parent =>
-                  chapterRepo.setChildren(parent.children)(chapter, path) >>- {
-                    sendStudyEnters(study, who.u)
-                    sendTo(study.id)(_.reloadAll)
-                  }
-                }
-            }
-          else
-            explorerGameHandler.quote(data.gameId) flatMap {
-              _ ?? {
-                doSetComment(study, Position(chapter, data.position.path), _, who)
-              }
-            }
-        }
-    }
-
-  def addChapter(studyId: Study.Id, data: ChapterMaker.Data, sticky: Boolean)(who: Who) =
-    sequenceStudy(studyId) { study =>
-      Contribute(who.u, study) {
-        chapterRepo.countByStudyId(study.id) flatMap { count =>
-          if (count >= Study.maxChapters) funit
-          else
-            chapterRepo.nextOrderByStudy(study.id) flatMap { order =>
-              chapterMaker(study, data, order, who.u) flatMap { chapter =>
-                data.initial ?? {
-                  chapterRepo.firstByStudy(study.id) flatMap {
-                    _.filter(_.isEmptyInitial) ?? chapterRepo.delete
-                  }
-                } >> doAddChapter(study, chapter, sticky, who)
-              } addFailureEffect {
-                case ChapterMaker.ValidationException(error) =>
-                  sendTo(study.id)(_.validationError(error, who.sri))
-                case u => println(u)
-              }
-            }
-        }
-      }
+  def rename(studyId: Study.Id, name: Study.Name): Funit =
+    sequenceStudy(studyId) { old =>
+      val study = old.copy(name = name)
+      studyRepo.updateSomeFields(study) >>- indexStudy(study)
     }
 
   def importPgns(studyId: Study.Id, datas: List[ChapterMaker.Data], sticky: Boolean)(who: Who) =
@@ -585,13 +614,14 @@ final class StudyApi(
       val newStudy = study withChapter chapter
       (sticky ?? studyRepo.updateSomeFields(newStudy)) >>-
         sendTo(study.id)(_.addChapter(newStudy.position, sticky, who))
-    } >>-
+    } >>
       studyRepo.updateNow(study) >>-
       indexStudy(study)
 
-  def setChapter(studyId: Study.Id, chapterId: Chapter.Id)(who: Who) = sequenceStudy(studyId) { study =>
-    study.canContribute(who.u) ?? doSetChapter(study, chapterId, who)
-  }
+  def setChapter(studyId: Study.Id, chapterId: Chapter.Id)(who: Who) =
+    sequenceStudy(studyId) { study =>
+      study.canContribute(who.u) ?? doSetChapter(study, chapterId, who)
+    }
 
   private def doSetChapter(study: Study, chapterId: Chapter.Id, who: Who) =
     (study.position.chapterId != chapterId) ?? {
@@ -604,8 +634,8 @@ final class StudyApi(
       }
     }
 
-  def editChapter(studyId: Study.Id, data: ChapterMaker.EditData)(who: Who) = sequenceStudy(studyId) {
-    study =>
+  def editChapter(studyId: Study.Id, data: ChapterMaker.EditData)(who: Who) =
+    sequenceStudy(studyId) { study =>
       Contribute(who.u, study) {
         chapterRepo.byIdAndStudy(data.id, studyId) flatMap {
           _ ?? { chapter =>
@@ -647,10 +677,10 @@ final class StudyApi(
           } >>- indexStudy(study)
         }
       }
-  }
+    }
 
-  def descChapter(studyId: Study.Id, data: ChapterMaker.DescData)(who: Who) = sequenceStudy(studyId) {
-    study =>
+  def descChapter(studyId: Study.Id, data: ChapterMaker.DescData)(who: Who) =
+    sequenceStudy(studyId) { study =>
       Contribute(who.u, study) {
         chapterRepo.byIdAndStudy(data.id, studyId) flatMap {
           _ ?? { chapter =>
@@ -666,85 +696,99 @@ final class StudyApi(
           }
         }
       }
-  }
+    }
 
-  def deleteChapter(studyId: Study.Id, chapterId: Chapter.Id)(who: Who) = sequenceStudy(studyId) { study =>
-    Contribute(who.u, study) {
-      chapterRepo.byIdAndStudy(chapterId, studyId) flatMap {
-        _ ?? { chapter =>
-          chapterRepo.orderedMetadataByStudy(studyId).flatMap { chaps =>
-            // deleting the only chapter? Automatically create an empty one
-            if (chaps.size < 2) {
-              chapterMaker(study, ChapterMaker.Data(Chapter.Name("Chapter 1")), 1, who.u) flatMap { c =>
-                doAddChapter(study, c, sticky = true, who) >> doSetChapter(study, c.id, who)
-              }
-            } // deleting the current chapter? Automatically move to another one
-            else
-              (study.position.chapterId == chapterId).?? {
-                chaps.find(_.id != chapterId) ?? { newChap =>
-                  doSetChapter(study, newChap.id, who)
+  def deleteChapter(studyId: Study.Id, chapterId: Chapter.Id)(who: Who) =
+    sequenceStudy(studyId) { study =>
+      Contribute(who.u, study) {
+        chapterRepo.byIdAndStudy(chapterId, studyId) flatMap {
+          _ ?? { chapter =>
+            chapterRepo.orderedMetadataByStudy(studyId).flatMap { chaps =>
+              // deleting the only chapter? Automatically create an empty one
+              if (chaps.sizeIs < 2) {
+                chapterMaker(study, ChapterMaker.Data(Chapter.Name("Chapter 1")), 1, who.u) flatMap { c =>
+                  doAddChapter(study, c, sticky = true, who) >> doSetChapter(study, c.id, who)
                 }
-              }
-          } >> chapterRepo.delete(chapter.id) >>- reloadChapters(study)
-        } >>- indexStudy(study)
+              } // deleting the current chapter? Automatically move to another one
+              else
+                (study.position.chapterId == chapterId).?? {
+                  chaps.find(_.id != chapterId) ?? { newChap =>
+                    doSetChapter(study, newChap.id, who)
+                  }
+                }
+            } >> chapterRepo.delete(chapter.id) >>- reloadChapters(study)
+          } >>- indexStudy(study)
+        }
       }
     }
-  }
 
-  def sortChapters(studyId: Study.Id, chapterIds: List[Chapter.Id])(who: Who) = sequenceStudy(studyId) {
-    study =>
+  def sortChapters(studyId: Study.Id, chapterIds: List[Chapter.Id])(who: Who) =
+    sequenceStudy(studyId) { study =>
       Contribute(who.u, study) {
         chapterRepo.sort(study, chapterIds) >>- reloadChapters(study)
       }
-  }
-
-  def descStudy(studyId: Study.Id, desc: String)(who: Who) = sequenceStudy(studyId) { study =>
-    Contribute(who.u, study) {
-      val newStudy = study.copy(description = desc.nonEmpty option desc)
-      (study != newStudy) ?? {
-        studyRepo.updateSomeFields(newStudy) >>-
-          sendTo(study.id)(_.descStudy(newStudy.description, who)) >>-
-          indexStudy(study)
-      }
     }
-  }
 
-  def editStudy(studyId: Study.Id, data: Study.Data)(who: Who) = sequenceStudy(studyId) { study =>
-    data.settings.ifTrue(study isOwner who.u) ?? { settings =>
-      val newStudy = study.copy(
-        name = Study toName data.name,
-        settings = settings,
-        visibility = data.vis,
-        description = settings.description option {
-          study.description.filter(_.nonEmpty) | "-"
+  def descStudy(studyId: Study.Id, desc: String)(who: Who) =
+    sequenceStudy(studyId) { study =>
+      Contribute(who.u, study) {
+        val newStudy = study.copy(description = desc.nonEmpty option desc)
+        (study != newStudy) ?? {
+          studyRepo.updateSomeFields(newStudy) >>-
+            sendTo(study.id)(_.descStudy(newStudy.description, who)) >>-
+            indexStudy(study)
         }
-      )
-      if (!study.isPublic && newStudy.isPublic) {
-        Bus.publish(
-          lila.hub.actorApi.study.StudyBecamePublic(studyId.value, study.members.contributorIds),
-          "study"
-        )
-      } else if (study.isPublic && !newStudy.isPublic) {
-        Bus.publish(
-          lila.hub.actorApi.study.StudyBecamePrivate(studyId.value, study.members.contributorIds),
-          "study"
-        )
-      }
-      (newStudy != study) ?? {
-        studyRepo.updateSomeFields(newStudy) >>-
-          sendTo(study.id)(_.reloadAll) >>-
-          indexStudy(study) >>-
-          lightStudyCache.put(studyId, fuccess(newStudy.light.some))
       }
     }
-  }
 
-  def delete(study: Study) = sequenceStudy(study.id) { study =>
-    studyRepo.delete(study) >>
-      chapterRepo.deleteByStudy(study) >>-
-      Bus.publish(lila.hub.actorApi.study.RemoveStudy(study.id.value, study.members.contributorIds), "study") >>-
-      lightStudyCache.invalidate(study.id)
-  }
+  def setTopics(studyId: Study.Id, topicStrs: List[String])(who: Who) =
+    sequenceStudy(studyId) { study =>
+      Contribute(who.u, study) {
+        val topics    = StudyTopics.fromStrs(topicStrs)
+        val newStudy  = study.copy(topics = topics.some)
+        val newTopics = study.topics.fold(topics)(topics.diff)
+        (study != newStudy) ?? {
+          studyRepo.updateTopics(newStudy) >>
+            topicApi.userTopicsAdd(who.u, newTopics) >>- {
+              sendTo(study.id)(_.setTopics(topics, who))
+              indexStudy(study)
+              topicApi.recompute()
+            }
+        }
+      }
+    }
+
+  def addTopics(studyId: Study.Id, topics: List[String]) =
+    sequenceStudy(studyId) { study =>
+      studyRepo.updateTopics(study addTopics StudyTopics.fromStrs(topics))
+    }
+
+  def editStudy(studyId: Study.Id, data: Study.Data)(who: Who) =
+    sequenceStudy(studyId) { study =>
+      canActAsOwner(study, who.u) flatMap { asOwner =>
+        data.settings.ifTrue(asOwner) ?? { settings =>
+          val newStudy = study.copy(
+            name = Study toName data.name,
+            settings = settings,
+            visibility = data.vis,
+            description = settings.description option {
+              study.description.filter(_.nonEmpty) | "-"
+            }
+          )
+          (newStudy != study) ?? {
+            studyRepo.updateSomeFields(newStudy) >>-
+              sendTo(study.id)(_.reloadAll) >>-
+              indexStudy(study)
+          }
+        }
+      }
+    }
+
+  def delete(study: Study) =
+    sequenceStudy(study.id) { study =>
+      studyRepo.delete(study) >>
+        chapterRepo.deleteByStudy(study)
+    }
 
   def like(studyId: Study.Id, v: Boolean)(who: Who): Funit =
     studyRepo.like(studyId, who.u, v) map { likes =>
@@ -775,35 +819,28 @@ final class StudyApi(
     }
 
   def analysisRequest(studyId: Study.Id, chapterId: Chapter.Id, userId: User.ID): Funit =
-    sequenceStudyWithChapter(studyId, chapterId) {
-      case Study.WithChapter(study, chapter) =>
-        Contribute(userId, study) {
-          serverEvalRequester(study, chapter, userId)
-        }
+    sequenceStudyWithChapter(studyId, chapterId) { case Study.WithChapter(study, chapter) =>
+      Contribute(userId, study) {
+        serverEvalRequester(study, chapter, userId)
+      }
     }
 
-  def deleteAllChapters(studyId: Study.Id, by: User) = sequenceStudy(studyId) { study =>
-    Contribute(by.id, study) {
-      chapterRepo deleteByStudy study
+  def deleteAllChapters(studyId: Study.Id, by: User) =
+    sequenceStudy(studyId) { study =>
+      Contribute(by.id, study) {
+        chapterRepo deleteByStudy study
+      }
     }
-  }
 
-  def erase(user: User) = studyRepo.allIdsByOwner(user.id) flatMap { ids =>
-    chatApi.removeAll(ids.map(id => Chat.Id(id.value)))
-    studyRepo.deleteByIds(ids) >>
-      chapterRepo.deleteByStudyIds(ids)
-  }
+  def adminInvite(studyId: Study.Id, me: Holder): Funit =
+    sequenceStudy(studyId) { inviter.admin(_, me) }
 
-  private def sendStudyEnters(study: Study, userId: User.ID) = Bus.publish(
-    lila.hub.actorApi.study.StudyDoor(
-      userId = userId,
-      studyId = study.id.value,
-      contributor = study canContribute userId,
-      public = study.isPublic,
-      enters = true
-    ),
-    "study"
-  )
+  def erase(user: User) =
+    studyRepo.allIdsByOwner(user.id) flatMap { ids =>
+      chatApi.removeAll(ids.map(id => Chat.Id(id.value)))
+      studyRepo.deleteByIds(ids) >>
+        chapterRepo.deleteByStudyIds(ids)
+    }
 
   private def indexStudy(study: Study) =
     Bus.publish(actorApi.SaveStudy(study), "study")
@@ -816,12 +853,15 @@ final class StudyApi(
       sendTo(study.id)(_ reloadChapters chapters)
     }
 
+  private def canActAsOwner(study: Study, userId: User.ID): Fu[Boolean] =
+    fuccess(study isOwner userId) >>| studyRepo.isAdminMember(study, userId)
+
   import ornicar.scalalib.Zero
   private def Contribute[A](userId: User.ID, study: Study)(f: => A)(implicit default: Zero[A]): A =
     if (study canContribute userId) f else default.zero
 
   // work around circular dependency
-  private var socket: Option[StudySocket]           = None
+  private var socket: Option[StudySocket] = None
   private[study] def registerSocket(s: StudySocket) = { socket = s.some }
   private def sendTo(studyId: Study.Id)(f: StudySocket => Study.Id => Unit): Unit =
     socket foreach { s =>

@@ -14,18 +14,22 @@ final private class NotificationRepo(val coll: Coll)(implicit ec: scala.concurre
     coll.delete.one(userNotificationsQuery(notifies) ++ selector).void
 
   def markAllRead(notifies: Notification.Notifies): Funit =
-    coll.update.one(unreadOnlyQuery(notifies), $set("read" -> true), multi = true).void
+    markManyRead(unreadOnlyQuery(notifies))
 
   def markAllRead(notifies: Iterable[Notification.Notifies]): Funit =
-    coll.update.one(unreadOnlyQuery(notifies), $set("read" -> true), multi = true).void
+    markManyRead(unreadOnlyQuery(notifies))
+
+  def markManyRead(doc: Bdoc): Funit =
+    coll.update.one(doc, $set("read" -> true), multi = true).void
 
   def unreadNotificationsCount(userId: Notification.Notifies): Fu[Int] =
     coll.countSel(unreadOnlyQuery(userId))
 
-  private def hasOld = $doc(
-    "read" -> false,
-    "createdAt" $gt DateTime.now.minusDays(3)
-  )
+  private def hasOld =
+    $doc(
+      "read" -> false,
+      "createdAt" $gt DateTime.now.minusDays(3)
+    )
   private def hasUnread =
     $doc( // recent, read
       "createdAt" $gt DateTime.now.minusMinutes(10)
@@ -54,12 +58,15 @@ final private class NotificationRepo(val coll: Coll)(implicit ec: scala.concurre
       ) ++ hasOldOrUnread
     )
 
-  def hasRecentPrivateMessageFrom(userId: Notification.Notifies, thread: PrivateMessage.Thread): Fu[Boolean] =
+  def hasRecentPrivateMessageFrom(
+      userId: Notification.Notifies,
+      sender: PrivateMessage.Sender
+  ): Fu[Boolean] =
     coll.exists(
       $doc(
-        "notifies"          -> userId,
-        "content.type"      -> "privateMessage",
-        "content.thread.id" -> thread.id
+        "notifies"     -> userId,
+        "content.type" -> "privateMessage",
+        "content.user" -> sender
       ) ++ hasOld
     )
 

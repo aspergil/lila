@@ -1,118 +1,84 @@
-package views
-package html.site
+package views.html
+package site
 
 import controllers.routes
+import scala.util.chaining._
+
 import lila.api.Context
 import lila.app.templating.Environment._
 import lila.app.ui.ScalatagsTemplate._
 
 object contact {
 
-  sealed private trait Node {
-    val id: String
-    val name: String
-  }
-  private case class Branch(id: String, name: String, children: List[Node]) extends Node
-  private case class Leaf(id: String, name: String, content: Frag)          extends Node
+  import trans.contact._
+  import views.html.base.navTree._
 
-  private case class FlatNode(id: String, name: String, parentId: Option[String])
-
-  private def reopenLeaf(prefix: String) =
+  private def reopenLeaf(prefix: String)(implicit ctx: Context) =
     Leaf(
       s"$prefix-reopen",
-      "I want to reopen my account",
+      wantReopen(),
       frag(
-        p(
-          "You can ",
-          a(href := routes.Account.reopen)(
-            "reopen your account on this page"
-          ),
-          ". It only works once."
+        p(a(href := routes.Account.reopen)(reopenOnThisPage())),
+        p(doNotAskByEmailToReopen())
+      )
+    )
+
+  private def howToReportBugs(implicit ctx: Context): Frag =
+    frag(
+      ul(
+        li(
+          a(href := routes.ForumCateg.show("lichess-feedback"))(reportBugInForum())
+        ),
+        li(
+          a(href := "https://github.com/ornicar/lila/issues")(reportWebsiteIssue())
+        ),
+        li(
+          a(href := "https://github.com/veloce/lichobile/issues")(reportMobileIssue())
+        ),
+        li(
+          a(href := "https://discord.gg/hy5jqSs")(reportBugInDiscord())
         )
-      )
+      ),
+      p(howToReportBug())
     )
 
-  private def howToReportBugs: Frag = frag(
-    ul(
-      li(
-        "In the ",
-        a(href := routes.ForumCateg.show("lichess-feedback"))("Lichess Feedback Forum")
-      ),
-      li(
-        "As a ",
-        a(href := "https://github.com/ornicar/lila/issues")("Lichess website issue"),
-        " on GitHub"
-      ),
-      li(
-        "As a ",
-        a(href := "https://github.com/veloce/lichobile/issues")("Lichess mobile app issue"),
-        " on GitHub"
-      ),
-      li(
-        "In the ",
-        a(href := "https://discord.gg/hy5jqSs")("Lichess discord server")
-      )
-    ),
-    p(
-      "Please describe what the bug looks like, what you expected to happen instead, and the steps to reproduce the bug."
-    )
-  )
-
-  private lazy val menu: Branch =
+  private def menu(implicit ctx: Context): Branch =
     Branch(
       "root",
-      "What can we help you with?",
+      whatCanWeHelpYouWith(),
       List(
         Branch(
           "login",
-          "I can't log in",
+          iCantLogIn(),
           List(
             Leaf(
               "email-confirm",
-              "I don't receive my confirmation email",
-              frag(
-                p(
-                  "You signed up, but didn't receive your confirmation email?",
-                  br,
-                  a(href := routes.Account.emailConfirmHelp)("Visit this page to solve the issue"),
-                  "."
-                )
+              noConfirmationEmail(),
+              p(
+                a(href := routes.Account.emailConfirmHelp)(visitThisPage()),
+                "."
               )
             ),
             Leaf(
               "forgot-password",
-              "I forgot my password",
-              frag(
-                p(
-                  "To request a new password, ",
-                  a(href := routes.Auth.passwordReset)(
-                    "visit the password reset page"
-                  ),
-                  "."
-                )
+              forgotPassword(),
+              p(
+                a(href := routes.Auth.passwordReset)(visitThisPage()),
+                "."
               )
             ),
             Leaf(
               "forgot-username",
-              "I forgot my username",
-              frag(
-                p(
-                  "You can ",
-                  a(href := routes.Auth.login)("login"),
-                  " with the email address you signed up with."
-                )
+              forgotUsername(),
+              p(
+                a(href := routes.Auth.login)(youCanLoginWithEmail()),
+                "."
               )
             ),
             Leaf(
               "lost-2fa",
-              "I lost access to my two-factor authentication codes",
-              frag(
-                p(
-                  "Do a ",
-                  a(href := routes.Auth.passwordReset)("password reset"),
-                  " to remove your second factor."
-                )
-              )
+              lost2FA(),
+              p(a(href := routes.Auth.passwordReset)(doPasswordReset()), ".")
             ),
             reopenLeaf("login"),
             Leaf(
@@ -139,152 +105,106 @@ object contact {
         ),
         Branch(
           "account",
-          "I need account support",
+          accountSupport(),
           List(
             Leaf(
               "title",
-              "I want my title displayed on Lichess",
-              frag(
-                p(
-                  "To show your title on your Lichess profile, and participate to Titled Arenas, ",
-                  a(href := routes.Page.master)(
-                    "visit the title confirmation page"
-                  ),
-                  "."
-                )
+              wantTitle(),
+              p(
+                a(href := routes.Page.master)(visitTitleConfirmation()),
+                "."
               )
             ),
             Leaf(
               "close",
-              "I want to close my account",
+              wantCloseAccount(),
               frag(
-                p(
-                  "You can close your account ",
-                  a(href := routes.Account.close)("on this page"),
-                  "."
-                ),
-                p("Do not ask us by email to close an account, we won't do it.")
+                p(a(href := routes.Account.close)(closeYourAccount()), "."),
+                p(doNotAskByEmail())
               )
             ),
             reopenLeaf("account"),
             Leaf(
               "change-username",
-              "I want to change my username",
+              wantChangeUsername(),
               frag(
-                p(
-                  "We're very sorry, but the username cannot be changed. For technical reasons, it's downright impossible."
-                ),
-                p("However, you can always close your current account, and create a new one.")
+                p(a(href := routes.Account.username)(changeUsernameCase()), "."),
+                p(cantChangeMore()),
+                p(orCloseAccount())
               )
             ),
             Leaf(
               "clear-history",
-              "I want to clear my history or rating",
+              wantClearHistory(),
               frag(
-                p("It's not possible to clear your game history, puzzle history, or ratings."),
-                p("However, you can always close your current account, and create a new one.")
+                p(cantClearHistory()),
+                p(orCloseAccount())
               )
             )
           )
         ),
-        Branch(
+        Leaf(
           "report",
-          "I want to report a player",
-          List("cheating", "sandbagging", "trolling", "insults", "some other reason").map { reason =>
-            Leaf(
-              reason,
-              s"Report a player for $reason",
-              frag(
-                p(
-                  s"To report a player for $reason, ",
-                  a(href := routes.Report.form)(strong("use the report form")),
-                  "."
-                ),
-                p(
-                  "You can also reach that page by clicking the ",
-                  button(cls := "thin button", dataIcon := "!"),
-                  " report button on a profile page."
-                ),
-                p(
-                  strong("Do not"),
-                  " report players in the forum.",
-                  br,
-                  strong("Do not"),
-                  " send us report emails.",
-                  br,
-                  "Only reporting players through ",
-                  a(href := routes.Report.form)("the report form"),
-                  " is effective."
-                )
-              )
+          wantReport(),
+          frag(
+            p(
+              a(href := routes.Report.form)(toReportAPlayerUseForm()),
+              "."
+            ),
+            p(
+              youCanAlsoReachReportPage(button(cls := "thin button button-empty", dataIcon := "!"))
+            ),
+            p(
+              doNotMessageModerators(),
+              br,
+              doNotReportInForum(),
+              br,
+              doNotSendReportEmails(),
+              br,
+              onlyReports()
             )
-          }
+          )
         ),
         Branch(
           "bug",
-          "I want to report a bug",
+          wantReportBug(),
           List(
             Leaf(
               "enpassant",
-              "Illegal pawn capture",
+              illegalPawnCapture(),
               frag(
-                p("It is called \"en passant\" and is one of the rules of chess."),
-                p(
-                  "Try ",
-                  a(href := "/learn#/15")("this interactive game"),
-                  " to learn more about this chess rule."
-                )
+                p(calledEnPassant()),
+                p(a(href := "/learn#/15")(tryEnPassant()), ".")
               )
             ),
             Leaf(
               "castling",
-              "Illegal or impossible castling",
+              illegalCastling(),
               frag(
-                p("The castle is only prevented if the king goes through a controlled square."),
-                p(
-                  "Make sure you understand the ",
-                  a(href := "https://en.wikipedia.org/wiki/Castling#Requirements")("castling requirements"),
-                  "."
-                ),
-                p(
-                  "Try ",
-                  a(href := "/learn#/15")("this interactive game"),
-                  " to practice castling in chess."
-                ),
-                p(
-                  "If you imported the game, or started it from a position, make sure you correctly set the castling rights."
-                )
+                p(castlingPrevented()),
+                p(a(href := "https://en.wikipedia.org/wiki/Castling#Requirements")(castlingRules()), "."),
+                p(a(href := "/learn#/14")(tryCastling()), "."),
+                p(castlingImported())
               )
             ),
             Leaf(
               "insufficient",
-              "Insufficient mating material",
+              insufficientMaterial(),
               frag(
-                p(
-                  "According to the ",
-                  a(href := "https://www.fide.com/FIDE/handbook/LawsOfChess.pdf")(
-                    "FIDE Laws of Chess §6.9 (pdf)"
-                  ),
-                  ", if a checkmate is possible with any legal sequence of moves, then the game is not a draw."
-                ),
-                p(
-                  "It can be possible to checkmate with only a knight or a bishop, if the opponent has more than a king on the board."
-                )
+                p(a(href := faq.fideHandbookUrl)(fideMate()), "."),
+                p(knightMate())
               )
             ),
             Leaf(
               "casual",
-              "No rating points were awarded",
-              frag(
-                p("Make sure you played a rated game."),
-                p("Casual games do not affect the players ratings.")
-              )
+              noRatingPoints(),
+              p(ratedGame())
             ),
             Leaf(
               "error-page",
-              "Error page",
+              errorPage(),
               frag(
-                p("If you faced an error page, you may report it:"),
+                p(reportErrorPage()),
                 howToReportBugs
               )
             ),
@@ -295,8 +215,7 @@ object contact {
                 p(s"Please report security issues to $contactEmail."),
                 p(
                   "Like all contributions to Lichess, security reviews and pentesting are appreciated. ",
-                  "Note that Lichess is built by volunteers and we currently do not have a bug bounty program. ",
-                  "At your option, we're happy to publicly thank you for any findings."
+                  "Note that Lichess is built by volunteers and we currently do not have a bug bounty program."
                 ),
                 p(
                   "Vulnerabilities are relevant even when they are not directly exploitable, ",
@@ -326,73 +245,71 @@ object contact {
             )
           )
         ),
-        Branch(
-          "appeal",
-          "Appeal for a ban or IP restriction",
-          List(
-            Leaf(
-              "appeal-cheat",
-              "Engine or cheat mark",
-              frag(
-                p(s"If you have been marked as an engine, you may send an appeal to $contactEmail."),
-                p(
-                  "False positives do happen sometimes, and we're sorry about that.",
-                  br,
-                  "If your appeal is legit, we will lift the ban ASAP."
-                ),
-                p(
-                  "However if you indeed used engine assistance, ",
-                  strong("even just once"),
-                  ", then your account is unfortunately lost.",
-                  br,
-                  "Do not deny having cheated. If you want to be allowed to create a new account, ",
-                  "just admit to what you did, and show that you understood that it was a mistake."
+        frag(
+          p(doNotMessageModerators()),
+          p(sendAppealTo(a(href := routes.Appeal.home)(netConfig.domain, routes.Appeal.home.url))),
+          p(
+            falsePositives(),
+            br,
+            ifLegit()
+          )
+        ) pipe { appealBase =>
+          Branch(
+            "appeal",
+            banAppeal(),
+            List(
+              Leaf(
+                "appeal-cheat",
+                engineAppeal(),
+                frag(
+                  appealBase,
+                  p(
+                    accountLost(),
+                    br,
+                    doNotDeny()
+                  )
                 )
-              )
-            ),
-            Leaf(
-              "appeal-other",
-              "None of the above",
-              frag(
-                p(s"You may send an appeal to $contactEmail."),
-                p(
-                  "False positives do happen sometimes, and we're sorry about that.",
-                  br,
-                  "If your appeal is legit, we will lift the ban or restriction ASAP."
-                )
+              ),
+              Leaf(
+                "appeal-other",
+                otherRestriction(),
+                appealBase
               )
             )
           )
-        ),
+        },
         Branch(
           "collab",
-          "Collaboration, legal, commercial",
+          collaboration(),
           List(
             Leaf(
               "monetize",
-              "Monetizing Lichess",
+              monetizing(),
               frag(
                 p("We are not interested in any way of monetizing Lichess."),
                 p(
                   "We will never display any kind of ads, we won't track our players, and we won't sell or buy traffic or users."
                 ),
-                p("Please do not email us about marketing, tracking, or advertising.")
+                p("Please do not email us about marketing, tracking, or advertising."),
+                br,
+                p(
+                  "We encourage everyone to ",
+                  a(href := "/ads")("block all ads and trackers.")
+                )
               )
             ),
             Leaf(
               "buy",
-              "Buying Lichess",
-              frag(
-                p("We are not selling, to anyone, for any price. Ever.")
-              )
+              buyingLichess(),
+              p("We are not selling, to anyone, for any price. Ever.")
             ),
             Leaf(
               "authorize",
-              "Authorization to use Lichess",
+              authorizationToUse(),
               frag(
-                p("You are welcome to use Lichess for your activity, even commercial."),
-                p("You can show it in your videos, and you can print screenshots of Lichess in your books."),
-                p("Credit is appreciated but not required.")
+                p(welcomeToUse()),
+                p(videosAndBooks()),
+                p(creditAppreciated())
               )
             ),
             Leaf(
@@ -413,13 +330,10 @@ object contact {
             ),
             Leaf(
               "contact-other",
-              "None of the above",
+              noneOfTheAbove(),
               frag(
-                p(s"Please send us an email at $contactEmail."),
-                p(
-                  "Please explain your request clearly and thoroughly. ",
-                  "State your Lichess username, and any information that could help us help you."
-                )
+                p(sendEmailAt(contactEmail)),
+                p(explainYourRequest())
               )
             )
           )
@@ -427,49 +341,17 @@ object contact {
       )
     )
 
-  private def renderNode(node: Node, parent: Option[Node]): Frag = node match {
-    case Leaf(_, _, content) =>
-      List(
-        div(makeId(node.id), cls := "node leaf")(
-          h2(parent map goBack, node.name),
-          div(cls := "content")(content)
-        )
-      )
-    case b @ Branch(id, _, children) =>
-      frag(
-        div(makeId(node.id), cls := s"node branch $id")(
-          h2(parent map goBack, node.name),
-          div(cls := "links")(
-            children map { child =>
-              a(makeLink(child.id))(child.name)
-            }
-          )
-        ),
-        children map { renderNode(_, b.some) }
-      )
-  }
-
-  private lazy val renderedMenu = renderNode(menu, none)
-
-  private def makeId(id: String)   = st.id := s"help-$id"
-  private def makeLink(id: String) = href := s"#help-$id"
-
-  private def goBack(parent: Node): Frag =
-    a(makeLink(parent.id), cls := "back", dataIcon := "I", title := "Go back")
-
   def apply()(implicit ctx: Context) =
-    help.layout(
-      title = "Contact",
+    page.layout(
+      title = trans.contact.contact.txt(),
       active = "contact",
       moreCss = cssTag("contact"),
       moreJs = embedJsUnsafe("""location=location.hash||"#help-root""""),
       contentCls = "page box box-pad"
     )(
       frag(
-        h1("Contact Lichess"),
-        div(cls := "contact")(
-          renderedMenu
-        )
+        h1(contactLichess()),
+        div(cls := "nav-tree")(renderNode(menu, none))
       )
     )
 }

@@ -9,15 +9,13 @@ import reactivemongo.api.bson._
 import scala.util.Success
 import scala.util.Try
 
+import lila.common.Iso
 import lila.db.BSON
 import lila.db.BSON.{ Reader, Writer }
 import lila.db.dsl._
-import lila.game.BSONHandlers.FENBSONHandler
 import lila.tree.Eval
 import lila.tree.Eval.Score
 import lila.tree.Node.{ Comment, Comments, Gamebook, Shape, Shapes }
-
-import lila.common.Iso
 
 object BSONHandlers {
 
@@ -28,9 +26,12 @@ object BSONHandlers {
   implicit val ChapterIdBSONHandler   = stringIsoHandler(Chapter.idIso)
   implicit val ChapterNameBSONHandler = stringIsoHandler(Chapter.nameIso)
   implicit val CentisBSONHandler      = intIsoHandler(Iso.centisIso)
+  implicit val StudyTopicBSONHandler  = stringIsoHandler(StudyTopic.topicIso)
+  implicit val StudyTopicsBSONHandler =
+    implicitly[BSONHandler[List[StudyTopic]]].as[StudyTopics](StudyTopics.apply, _.value)
 
   implicit private val PosBSONHandler = tryHandler[Pos](
-    { case BSONString(v) => Pos.posAt(v) toTry s"No such pos: $v" },
+    { case BSONString(v) => Pos.fromKey(v) toTry s"No such pos: $v" },
     x => BSONString(x.key)
   )
 
@@ -41,10 +42,11 @@ object BSONHandlers {
         Shape.Circle(brush, pos)
       } getOrElse Shape.Arrow(brush, r.get[Pos]("o"), r.get[Pos]("d"))
     }
-    def writes(w: Writer, t: Shape) = t match {
-      case Shape.Circle(brush, pos)       => $doc("b" -> brush, "p" -> pos.key)
-      case Shape.Arrow(brush, orig, dest) => $doc("b" -> brush, "o" -> orig.key, "d" -> dest.key)
-    }
+    def writes(w: Writer, t: Shape) =
+      t match {
+        case Shape.Circle(brush, pos)       => $doc("b" -> brush, "p" -> pos.key)
+        case Shape.Arrow(brush, orig, dest) => $doc("b" -> brush, "o" -> orig.key, "d" -> dest.key)
+      }
   }
 
   implicit val PromotableRoleHandler = tryHandler[PromotableRole](
@@ -63,12 +65,11 @@ object BSONHandlers {
   )
 
   implicit val UciCharPairHandler = tryHandler[UciCharPair](
-    {
-      case BSONString(v) =>
-        v.toArray match {
-          case Array(a, b) => Success(UciCharPair(a, b))
-          case _           => handlerBadValue(s"Invalid UciCharPair $v")
-        }
+    { case BSONString(v) =>
+      v.toArray match {
+        case Array(a, b) => Success(UciCharPair(a, b))
+        case _           => handlerBadValue(s"Invalid UciCharPair $v")
+      }
     },
     x => BSONString(x.toString)
   )
@@ -87,14 +88,16 @@ object BSONHandlers {
     {
       case BSONString(lila.user.User.lichessId | "l") => Comment.Author.Lichess
       case BSONString(name)                           => Comment.Author.External(name)
-      case doc: Bdoc => {
-        for {
-          id   <- doc.getAsOpt[String]("id")
-          name <- doc.getAsOpt[String]("name")
-        } yield Comment.Author.User(id, name)
-      } err s"Invalid comment author $doc"
+      case doc: Bdoc =>
+        {
+          for {
+            id   <- doc.getAsOpt[String]("id")
+            name <- doc.getAsOpt[String]("name")
+          } yield Comment.Author.User(id, name)
+        } err s"Invalid comment author $doc"
       case _ => Comment.Author.Unknown
-    }, {
+    },
+    {
       case Comment.Author.User(id, name) => $doc("id" -> id, "name" -> name)
       case Comment.Author.External(name) => BSONString(s"${name.trim}")
       case Comment.Author.Lichess        => BSONString("l")
@@ -108,31 +111,33 @@ object BSONHandlers {
 
   implicit val GamebookBSONHandler = Macros.handler[Gamebook]
 
-  implicit private def CrazyDataBSONHandler: BSON[Crazyhouse.Data] = new BSON[Crazyhouse.Data] {
-    private def writePocket(p: Crazyhouse.Pocket) = p.roles.map(_.forsyth).mkString
-    private def readPocket(p: String)             = Crazyhouse.Pocket(p.view.flatMap(chess.Role.forsyth).toList)
-    def reads(r: Reader) = Crazyhouse.Data(
-      promoted = r.getsD[Pos]("o").toSet,
-      pockets = Crazyhouse.Pockets(
-        white = readPocket(r.strD("w")),
-        black = readPocket(r.strD("b"))
-      )
-    )
-    def writes(w: Writer, s: Crazyhouse.Data) = $doc(
-      "o" -> w.listO(s.promoted.toList),
-      "w" -> w.strO(writePocket(s.pockets.white)),
-      "b" -> w.strO(writePocket(s.pockets.black))
-    )
-  }
+  implicit private def CrazyDataBSONHandler: BSON[Crazyhouse.Data] =
+    new BSON[Crazyhouse.Data] {
+      private def writePocket(p: Crazyhouse.Pocket) = p.roles.map(_.forsyth).mkString
+      private def readPocket(p: String)             = Crazyhouse.Pocket(p.view.flatMap(chess.Role.forsyth).toList)
+      def reads(r: Reader) =
+        Crazyhouse.Data(
+          promoted = r.getsD[Pos]("o").toSet,
+          pockets = Crazyhouse.Pockets(
+            white = readPocket(r.strD("w")),
+            black = readPocket(r.strD("b"))
+          )
+        )
+      def writes(w: Writer, s: Crazyhouse.Data) =
+        $doc(
+          "o" -> w.listO(s.promoted.toList),
+          "w" -> w.strO(writePocket(s.pockets.white)),
+          "b" -> w.strO(writePocket(s.pockets.black))
+        )
+    }
 
   implicit val GlyphsBSONHandler = {
     val intReader = collectionReader[List, Int]
     tryHandler[Glyphs](
-      {
-        case arr: Barr =>
-          intReader.readTry(arr) map { ints =>
-            Glyphs.fromList(ints flatMap Glyph.find)
-          }
+      { case arr: Barr =>
+        intReader.readTry(arr) map { ints =>
+          Glyphs.fromList(ints flatMap Glyph.find)
+        }
       },
       x => BSONArray(x.toList.map(_.id).map(BSONInteger.apply))
     )
@@ -153,83 +158,98 @@ object BSONHandlers {
     )
   }
 
-  implicit val ChildrenBSONHandler: BSONHandler[Node.Children] = tryHandler[Node.Children](
-    {
-      case arr: BSONArray =>
-        Try {
-          Node.Children(
-            arr.values.view.map(v => NodeBSONHandler.readTry(v).get).toVector
-          )
-        }
-    },
-    children =>
-      BSONArray(children.nodes map { n =>
-        NodeBSONHandler.writeTry(n).get
-      })
-  )
-
-  implicit lazy val NodeBSONHandler: BSON[Node] = new BSON[Node] {
-    def reads(r: Reader) = Node(
-      id = r.get[UciCharPair]("i"),
-      ply = r int "p",
-      move = WithSan(r.get[Uci]("u"), r.str("s")),
-      fen = r.get[FEN]("f"),
-      check = r boolD "c",
-      shapes = r.getO[Shapes]("h") | Shapes.empty,
-      comments = r.getO[Comments]("co") | Comments.empty,
-      gamebook = r.getO[Gamebook]("ga"),
-      glyphs = r.getO[Glyphs]("g") | Glyphs.empty,
-      score = r.getO[Score]("e"),
-      crazyData = r.getO[Crazyhouse.Data]("z"),
-      clock = r.getO[Centis]("l"),
-      children = r.get[Node.Children]("n"),
-      forceVariation = r boolD "fv"
-    )
-    def writes(w: Writer, s: Node) = $doc(
-      "i"  -> s.id,
-      "p"  -> s.ply,
-      "u"  -> s.move.uci,
-      "s"  -> s.move.san,
-      "f"  -> s.fen,
-      "c"  -> w.boolO(s.check),
-      "h"  -> s.shapes.value.nonEmpty.option(s.shapes),
-      "co" -> s.comments.value.nonEmpty.option(s.comments),
-      "ga" -> s.gamebook,
-      "g"  -> s.glyphs.nonEmpty,
-      "e"  -> s.score,
-      "l"  -> s.clock,
-      "z"  -> s.crazyData,
-      "n"  -> (if (s.ply < Node.MAX_PLIES) s.children else Node.emptyChildren),
-      "fv" -> w.boolO(s.forceVariation)
+  def readNode(doc: Bdoc, id: UciCharPair): Option[Node] = {
+    import Node.{ BsonFields => F }
+    for {
+      ply <- doc.getAsOpt[Int](F.ply)
+      uci <- doc.getAsOpt[Uci](F.uci)
+      san <- doc.getAsOpt[String](F.san)
+      fen <- doc.getAsOpt[FEN](F.fen)
+      check          = ~doc.getAsOpt[Boolean](F.check)
+      shapes         = doc.getAsOpt[Shapes](F.shapes) getOrElse Shapes.empty
+      comments       = doc.getAsOpt[Comments](F.comments) getOrElse Comments.empty
+      gamebook       = doc.getAsOpt[Gamebook](F.gamebook)
+      glyphs         = doc.getAsOpt[Glyphs](F.glyphs) getOrElse Glyphs.empty
+      score          = doc.getAsOpt[Score](F.score)
+      clock          = doc.getAsOpt[Centis](F.clock)
+      crazy          = doc.getAsOpt[Crazyhouse.Data](F.crazy)
+      forceVariation = ~doc.getAsOpt[Boolean](F.forceVariation)
+    } yield Node(
+      id,
+      ply,
+      WithSan(uci, san),
+      fen,
+      check,
+      shapes,
+      comments,
+      gamebook,
+      glyphs,
+      score,
+      clock,
+      crazy,
+      Node.emptyChildren,
+      forceVariation
     )
   }
+
+  def writeNode(n: Node) = {
+    import Node.BsonFields._
+    val w = new Writer
+    $doc(
+      ply            -> n.ply,
+      uci            -> n.move.uci,
+      san            -> n.move.san,
+      fen            -> n.fen,
+      check          -> w.boolO(n.check),
+      shapes         -> n.shapes.value.nonEmpty.option(n.shapes),
+      comments       -> n.comments.value.nonEmpty.option(n.comments),
+      gamebook       -> n.gamebook,
+      glyphs         -> n.glyphs.nonEmpty,
+      score          -> n.score,
+      clock          -> n.clock,
+      crazy          -> n.crazyData,
+      forceVariation -> w.boolO(n.forceVariation),
+      order -> {
+        (n.children.nodes.sizeIs > 1) option n.children.nodes.map(_.id)
+      }
+    )
+  }
+
   import Node.Root
   implicit private[study] lazy val NodeRootBSONHandler: BSON[Root] = new BSON[Root] {
-    def reads(r: Reader) = Root(
-      ply = r int "p",
-      fen = r.get[FEN]("f"),
-      check = r boolD "c",
-      shapes = r.getO[Shapes]("h") | Shapes.empty,
-      comments = r.getO[Comments]("co") | Comments.empty,
-      gamebook = r.getO[Gamebook]("ga"),
-      glyphs = r.getO[Glyphs]("g") | Glyphs.empty,
-      score = r.getO[Score]("e"),
-      clock = r.getO[Centis]("l"),
-      crazyData = r.getO[Crazyhouse.Data]("z"),
-      children = r.get[Node.Children]("n")
-    )
-    def writes(w: Writer, s: Root) = $doc(
-      "p"  -> s.ply,
-      "f"  -> s.fen,
-      "c"  -> w.boolO(s.check),
-      "h"  -> s.shapes.value.nonEmpty.option(s.shapes),
-      "co" -> s.comments.value.nonEmpty.option(s.comments),
-      "ga" -> s.gamebook,
-      "g"  -> s.glyphs.nonEmpty,
-      "e"  -> s.score,
-      "l"  -> s.clock,
-      "z"  -> s.crazyData,
-      "n"  -> s.children
+    import Node.BsonFields._
+    def reads(fullReader: Reader) = {
+      val rootNode = fullReader.doc.getAsOpt[Bdoc](Path.rootDbKey) err "Missing root"
+      val r        = new Reader(rootNode)
+      Root(
+        ply = r int ply,
+        fen = r.get[FEN](fen),
+        check = r boolD check,
+        shapes = r.getO[Shapes](shapes) | Shapes.empty,
+        comments = r.getO[Comments](comments) | Comments.empty,
+        gamebook = r.getO[Gamebook](gamebook),
+        glyphs = r.getO[Glyphs](glyphs) | Glyphs.empty,
+        score = r.getO[Score](score),
+        clock = r.getO[Centis](clock),
+        crazyData = r.getO[Crazyhouse.Data](crazy),
+        children = StudyFlatTree.reader.rootChildren(fullReader.doc)
+      )
+    }
+    def writes(w: Writer, r: Root) = $doc(
+      StudyFlatTree.writer.rootChildren(r) appended {
+        Path.rootDbKey -> $doc(
+          ply      -> r.ply,
+          fen      -> r.fen,
+          check    -> r.check.some.filter(identity),
+          shapes   -> r.shapes.value.nonEmpty.option(r.shapes),
+          comments -> r.comments.value.nonEmpty.option(r.comments),
+          gamebook -> r.gamebook,
+          glyphs   -> r.glyphs.nonEmpty,
+          score    -> r.score,
+          clock    -> r.clock,
+          crazy    -> r.crazyData
+        )
+      }
     )
   }
 
@@ -240,12 +260,11 @@ object BSONHandlers {
   )
 
   implicit val PgnTagBSONHandler = tryHandler[Tag](
-    {
-      case BSONString(v) =>
-        v.split(":", 2) match {
-          case Array(name, value) => Success(Tag(name, value))
-          case _                  => handlerBadValue(s"Invalid pgn tag $v")
-        }
+    { case BSONString(v) =>
+      v.split(":", 2) match {
+        case Array(name, value) => Success(Tag(name, value))
+        case _                  => handlerBadValue(s"Invalid pgn tag $v")
+      }
     },
     t => BSONString(s"${t.name}:${t.value}")
   )
@@ -274,8 +293,8 @@ object BSONHandlers {
   implicit private[study] val MembersBSONHandler: BSONHandler[StudyMembers] =
     implicitly[BSONHandler[Map[String, DbMember]]].as[StudyMembers](
       members =>
-        StudyMembers(members map {
-          case (id, dbMember) => id -> StudyMember(id, dbMember.role)
+        StudyMembers(members map { case (id, dbMember) =>
+          id -> StudyMember(id, dbMember.role)
         }),
       _.members.view.mapValues(m => DbMember(m.role)).toMap
     )
@@ -286,16 +305,15 @@ object BSONHandlers {
   )
   import Study.From
   implicit private[study] val FromHandler = tryHandler[From](
-    {
-      case BSONString(v) =>
-        v.split(' ') match {
-          case Array("scratch")   => Success(From.Scratch)
-          case Array("game", id)  => Success(From.Game(id))
-          case Array("study", id) => Success(From.Study(Study.Id(id)))
-          case Array("relay")     => Success(From.Relay(none))
-          case Array("relay", id) => Success(From.Relay(Study.Id(id).some))
-          case _                  => handlerBadValue(s"Invalid from $v")
-        }
+    { case BSONString(v) =>
+      v.split(' ') match {
+        case Array("scratch")   => Success(From.Scratch)
+        case Array("game", id)  => Success(From.Game(id))
+        case Array("study", id) => Success(From.Study(Study.Id(id)))
+        case Array("relay")     => Success(From.Relay(none))
+        case Array("relay", id) => Success(From.Relay(Study.Id(id).some))
+        case _                  => handlerBadValue(s"Invalid from $v")
+      }
     },
     x =>
       BSONString(x match {
@@ -311,14 +329,15 @@ object BSONHandlers {
     x => BSONString(x.key)
   )
   implicit val SettingsBSONHandler = new BSON[Settings] {
-    def reads(r: Reader) = Settings(
-      computer = r.get[UserSelection]("computer"),
-      explorer = r.get[UserSelection]("explorer"),
-      cloneable = r.getO[UserSelection]("cloneable") | Settings.init.cloneable,
-      chat = r.getO[UserSelection]("chat") | Settings.init.chat,
-      sticky = r.getO[Boolean]("sticky") | Settings.init.sticky,
-      description = r.getO[Boolean]("description") | Settings.init.description
-    )
+    def reads(r: Reader) =
+      Settings(
+        computer = r.get[UserSelection]("computer"),
+        explorer = r.get[UserSelection]("explorer"),
+        cloneable = r.getO[UserSelection]("cloneable") | Settings.init.cloneable,
+        chat = r.getO[UserSelection]("chat") | Settings.init.chat,
+        sticky = r.getO[Boolean]("sticky") | Settings.init.sticky,
+        description = r.getO[Boolean]("description") | Settings.init.description
+      )
     private val writer                 = Macros.writer[Settings]
     def writes(w: Writer, s: Settings) = writer.writeTry(s).get
   }

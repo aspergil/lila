@@ -12,10 +12,11 @@ case class Profile(
     links: Option[String] = None
 ) {
 
-  def nonEmptyRealName = List(ne(firstName), ne(lastName)).flatten match {
-    case Nil   => none
-    case names => (names mkString " ").some
-  }
+  def nonEmptyRealName =
+    List(ne(firstName), ne(lastName)).flatten match {
+      case Nil   => none
+      case names => (names mkString " ").some
+    }
 
   def countryInfo = country flatMap Countries.info
 
@@ -24,8 +25,6 @@ case class Profile(
   def nonEmptyBio = ne(bio)
 
   def isEmpty = completionPercent == 0
-
-  def isComplete = completionPercent == 100
 
   def completionPercent: Int =
     100 * List(country, bio, firstName, lastName).count(_.isDefined) / 4

@@ -29,8 +29,8 @@ object bits {
       )
     )
 
-  def author(name: String, videos: Paginator[lila.video.VideoView], control: lila.video.UserControl)(
-      implicit ctx: Context
+  def author(name: String, videos: Paginator[lila.video.VideoView], control: lila.video.UserControl)(implicit
+      ctx: Context
   ) =
     layout(
       title = s"$name • Free Chess Videos",
@@ -46,15 +46,9 @@ object bits {
           " found"
         )
       ),
-      div(cls := "list infinitescroll box__pad")(
+      div(cls := "list infinite-scroll box__pad")(
         videos.currentPageResults.map { card(_, control) },
-        videos.nextPage.map { next =>
-          div(cls := "pager none")(
-            a(rel := "next", href := s"${routes.Video.author(name)}?${control.queryString}&page=${next}")(
-              "Next"
-            )
-          )
-        }
+        pagerNext(videos, np => s"${routes.Video.author(name)}?${control.queryString}&page=$np")
       )
     )
 
@@ -75,7 +69,7 @@ object bits {
 
   def searchForm(query: Option[String])(implicit ctx: Context) =
     form(cls := "search", method := "GET", action := routes.Video.index)(
-      input(placeholder := trans.search.txt(), tpe := "text", name := "q", value := query)
+      input(placeholder := trans.search.search.txt(), tpe := "text", name := "q", value := query)
     )
 
   def tags(ts: List[lila.video.TagNb], control: lila.video.UserControl)(implicit ctx: Context) =

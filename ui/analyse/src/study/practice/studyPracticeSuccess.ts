@@ -10,7 +10,7 @@ function isDrawish(node: Tree.Node): boolean | null {
 // returns null if not deep enough to know
 function isWinning(node: Tree.Node, goalCp: number, color: Color): boolean | null {
   if (!hasSolidEval(node)) return null;
-  const cp = node.ceval!.mate! > 0 ? 99999 : (node.ceval!.mate! < 0 ? -99999 : node.ceval!.cp);
+  const cp = node.ceval!.mate! > 0 ? 99999 : node.ceval!.mate! < 0 ? -99999 : node.ceval!.cp;
   return color === 'white' ? cp! >= goalCp : cp! <= goalCp;
 }
 // returns null if not deep enough to know
@@ -25,28 +25,17 @@ function hasSolidEval(node: Tree.Node) {
   return node.ceval && node.ceval.depth >= 16;
 }
 
-function isMate(root: AnalyseCtrl) {
-  return root.gameOver() === 'checkmate';
-}
-
-function isMyMate(root: AnalyseCtrl) {
-  return isMate(root) && root.turnColor() !== root.bottomColor();
-}
-
-function isTheirMate(root: AnalyseCtrl) {
-  return isMate(root) && root.turnColor() === root.bottomColor();
-}
-
 function hasBlundered(comment: Comment | null) {
   return comment && (comment.verdict === 'mistake' || comment.verdict === 'blunder');
 }
 
 // returns null = ongoing, true = win, false = fail
-export default function(root: AnalyseCtrl, goal: Goal, nbMoves: number): boolean | null {
+export default function (root: AnalyseCtrl, goal: Goal, nbMoves: number): boolean | null {
   const node = root.node;
   if (!node.uci) return null;
-  if (isTheirMate(root)) return false;
-  if (isMyMate(root)) return true;
+  const outcome = root.outcome();
+  if (outcome && outcome.winner && outcome.winner !== root.bottomColor()) return false;
+  if (outcome && outcome.winner && outcome.winner === root.bottomColor()) return true;
   if (hasBlundered(root.practice!.comment())) return false;
   switch (goal.result) {
     case 'drawIn':
@@ -54,7 +43,7 @@ export default function(root: AnalyseCtrl, goal: Goal, nbMoves: number): boolean
       if (node.threefold) return true;
       if (isDrawish(node) === false) return false;
       if (nbMoves > goal.moves!) return false;
-      if (root.gameOver() === 'draw') return true;
+      if (outcome && !outcome.winner) return true;
       if (nbMoves >= goal.moves!) return isDrawish(node);
       break;
     case 'evalIn':
@@ -72,4 +61,4 @@ export default function(root: AnalyseCtrl, goal: Goal, nbMoves: number): boolean
     case 'mate':
   }
   return null;
-};
+}

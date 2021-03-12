@@ -15,25 +15,16 @@ object ratingDistribution {
 
   def apply(perfType: PerfType, data: List[Int])(implicit ctx: Context) =
     views.html.base.layout(
-      title = trans.weeklyPerfTypeRatingDistribution.txt(perfType.name),
+      title = trans.weeklyPerfTypeRatingDistribution.txt(perfType.trans),
       moreCss = cssTag("user.rating.stats"),
       wrapClass = "full-screen-force",
       moreJs = frag(
         jsTag("chart/ratingDistribution.js"),
-        embedJsUnsafe(s"""lichess.ratingDistributionChart(${safeJsonValue(
+        embedJsUnsafeLoadThen(s"""lichess.ratingDistributionChart(${safeJsonValue(
           Json.obj(
-            "freq" -> data,
-            "myRating" -> ctx.me.map { me =>
-              me.perfs(perfType).intRating
-            },
-            "i18n" -> i18nJsObject(
-              List(
-                trans.players,
-                trans.yourRating,
-                trans.cumulative,
-                trans.glicko2Rating
-              )
-            )
+            "freq"     -> data,
+            "myRating" -> ctx.me.map(_.perfs(perfType).intRating),
+            "i18n"     -> i18nJsObject(i18nKeys)
           )
         )})""")
       )
@@ -45,13 +36,13 @@ object ratingDistribution {
             trans.weeklyPerfTypeRatingDistribution(
               views.html.base.bits.mselect(
                 "variant-stats",
-                span(perfType.name),
+                span(perfType.trans),
                 PerfType.leaderboardable map { pt =>
                   a(
                     dataIcon := pt.iconChar,
                     cls := (perfType == pt).option("current"),
                     href := routes.Stat.ratingDistribution(pt.key)
-                  )(pt.name)
+                  )(pt.trans)
                 }
               )
             )
@@ -62,21 +53,21 @@ object ratingDistribution {
                 case (under, sum) =>
                   div(
                     trans
-                      .nbPerfTypePlayersThisWeek(raw(s"""<strong>${sum.localize}</strong>"""), perfType.name),
+                      .nbPerfTypePlayersThisWeek(strong(sum.localize), perfType.trans),
                     br,
-                    trans.yourPerfTypeRatingIsRating(perfType.name, raw(s"""<strong>$rating</strong>""")),
+                    trans.yourPerfTypeRatingIsRating(perfType.trans, strong(rating)),
                     br,
                     trans.youAreBetterThanPercentOfPerfTypePlayers(
-                      raw(s"""<strong>${(under * 100.0 / sum).round}%</strong>"""),
-                      perfType.name
+                      strong((under * 100.0 / sum).round, "%"),
+                      perfType.trans
                     )
                   )
               }
             } getOrElse div(
               trans.nbPerfTypePlayersThisWeek
-                .plural(data.sum, raw(s"""<strong>${data.sum.localize}</strong>"""), perfType.name),
+                .plural(data.sum, strong(data.sum.localize), perfType.trans),
               br,
-              trans.youDoNotHaveAnEstablishedPerfTypeRating(perfType.name)
+              trans.youDoNotHaveAnEstablishedPerfTypeRating(perfType.trans)
             )
           ),
           div(id := "rating_distribution_chart")(spinner)
@@ -84,4 +75,11 @@ object ratingDistribution {
       )
     }
 
+  private val i18nKeys =
+    List(
+      trans.players,
+      trans.yourRating,
+      trans.cumulative,
+      trans.glicko2Rating
+    ).map(_.key)
 }

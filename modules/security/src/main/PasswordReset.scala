@@ -23,21 +23,21 @@ final class PasswordReset(
       val url = s"$baseUrl/password/reset/confirm/$token"
       mailgun send Mailgun.Message(
         to = email,
-        subject = trans.passwordReset_subject.literalTxtTo(lang, List(user.username)),
+        subject = trans.passwordReset_subject.txt(user.username),
         text = s"""
-${trans.passwordReset_intro.literalTxtTo(lang)}
+${trans.passwordReset_intro.txt()}
 
-${trans.passwordReset_clickOrIgnore.literalTxtTo(lang)}
+${trans.passwordReset_clickOrIgnore.txt()}
 
 $url
 
-${trans.common_orPaste.literalTxtTo(lang)}
+${trans.common_orPaste.txt()}
 
 ${Mailgun.txt.serviceNote}
 """,
         htmlBody = emailMessage(
-          pDesc(trans.passwordReset_intro.literalTo(lang)),
-          p(trans.passwordReset_clickOrIgnore.literalTo(lang)),
+          pDesc(trans.passwordReset_intro()),
+          p(trans.passwordReset_clickOrIgnore()),
           potentialAction(metaName("Reset password"), Mailgun.html.url(url)),
           serviceNote
         ).some
@@ -45,10 +45,16 @@ ${Mailgun.txt.serviceNote}
     }
 
   def confirm(token: String): Fu[Option[User]] =
-    tokener read token flatMap { _ ?? userRepo.byId }
+    tokener read token flatMap { _ ?? userRepo.byId } map {
+      _.filter(_.canLogin)
+    }
 
   private val tokener = new StringToken[User.ID](
     secret = tokenerSecret,
-    getCurrentValue = id => userRepo getPasswordHash id dmap (~_)
+    getCurrentValue = id =>
+      for {
+        hash  <- userRepo getPasswordHash id
+        email <- userRepo email id
+      } yield ~hash + email.fold("")(_.value)
   )
 }

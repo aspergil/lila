@@ -35,11 +35,11 @@ object index {
               h2("Previous blog posts")
             )
           },
-          div(cls := "blog-cards list infinitescroll")(
+          div(cls := "blog-cards list infinite-scroll")(
             pager.currentPageResults flatMap MiniPost.fromDocument("blog", "wide") map { post =>
               primaryPost.fold(true)(_.id != post.id) option bits.postCard(post, "paginated".some, h3)
             },
-            pagerNext(pager, np => routes.Blog.index(np, none).url)
+            pagerNext(pager, np => routes.Blog.index(np).url)
           )
         )
       )

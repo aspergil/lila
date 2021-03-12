@@ -1,19 +1,26 @@
 package lila.user
 
+import io.lemonlabs.uri.Url
+import scala.util.Try
+
 object Links {
 
   def make(text: String): List[Link] = text.linesIterator.to(List).map(_.trim).flatMap(toLink)
 
   private val UrlRegex = """^(?:https?://)?+([^/]+)""".r.unanchored
 
-  private def toLink(line: String): Option[Link] = line match {
-    case UrlRegex(domain) =>
-      Link(
-        site = Link.Site.allKnown find (_ matches domain) getOrElse Link.Site.Other(domain),
-        url = if (line startsWith "http") line else s"https://$line"
-      ).some
-    case _ => none
-  }
+  private def toLink(line: String): Option[Link] =
+    line match {
+      case UrlRegex(domain) =>
+        Link.Site.allKnown find (_ matches domain) orElse
+          Try(Url.parse(domain).toStringPunycode).toOption.map(Link.Site.Other) map { site =>
+            Link(
+              site = site,
+              url = if (line startsWith "http") line else s"https://$line"
+            )
+          }
+      case _ => none
+    }
 }
 
 case class Link(site: Link.Site, url: String)
@@ -22,9 +29,10 @@ object Link {
 
   sealed abstract class Site(val name: String, val domains: List[String]) {
 
-    def matches(domain: String) = domains.exists { d =>
-      domain endsWith d
-    }
+    def matches(domain: String) =
+      domains.exists { d =>
+        domain == d || domain.endsWith(s".$d")
+      }
   }
 
   object Site {
@@ -36,9 +44,7 @@ object Link {
     case object VKontakte            extends Site("VKontakte", List("vk.com"))
     case object ChessCom             extends Site("Chess.com", List("chess.com"))
     case object Chess24              extends Site("Chess24", List("chess24.com"))
-    case object GameKnot             extends Site("GameKnot", List("gameknot.com"))
     case object ChessTempo           extends Site("ChessTempo", List("chesstempo.com"))
-    case object ChessCube            extends Site("ChessCube", List("chesscube.com"))
     case class Other(domain: String) extends Site(domain, List(domain))
 
     val allKnown: List[Site] = List(
@@ -50,9 +56,7 @@ object Link {
       VKontakte,
       ChessCom,
       Chess24,
-      GameKnot,
-      ChessTempo,
-      ChessCube
+      ChessTempo
     )
   }
 }

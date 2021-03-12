@@ -1,6 +1,5 @@
 package lila.security
 
-import com.github.ghik.silencer.silent
 import org.joda.time.DateTime
 import ornicar.scalalib.Random
 import play.api.data._
@@ -8,12 +7,14 @@ import play.api.data.Forms._
 import play.api.data.validation.{ Constraint, Valid => FormValid, Invalid, ValidationError }
 import play.api.mvc.RequestHeader
 import reactivemongo.api.bson._
+import reactivemongo.api.ReadPreference
+import scala.annotation.nowarn
 import scala.concurrent.duration._
 
-import lila.common.{ ApiVersion, EmailAddress, IpAddress }
+import lila.common.{ ApiVersion, EmailAddress, HTTPRequest, IpAddress }
 import lila.db.BSON.BSONJodaDateTimeHandler
 import lila.db.dsl._
-import lila.oauth.OAuthServer
+import lila.oauth.{ AccessToken, OAuthServer }
 import lila.user.{ User, UserRepo }
 import User.LoginCandidate
 
@@ -24,8 +25,12 @@ final class SecurityApi(
     geoIP: GeoIP,
     authenticator: lila.user.Authenticator,
     emailValidator: EmailAddressValidator,
-    tryOauthServer: lila.oauth.OAuthServer.Try
-)(implicit ec: scala.concurrent.ExecutionContext, system: akka.actor.ActorSystem) {
+    tryOauthServer: lila.oauth.OAuthServer.Try,
+    tor: Tor
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    system: akka.actor.ActorSystem
+) {
 
   val AccessUri = "access_uri"
 
@@ -68,41 +73,41 @@ final class SecurityApi(
       case None if User.couldBeUsername(str) => authenticator.loginCandidateById(User normalize str)
       case _                                 => fuccess(none)
     }
-  } map loadedLoginForm _
+  } map loadedLoginForm
 
+  @nowarn("cat=unused")
   private def authenticateCandidate(candidate: Option[LoginCandidate])(
-      @silent _username: String,
+      _username: String,
       password: String,
       token: Option[String]
-  ): LoginCandidate.Result = candidate.fold[LoginCandidate.Result](LoginCandidate.InvalidUsernameOrPassword) {
-    _(User.PasswordAndToken(User.ClearPassword(password), token map User.TotpToken.apply))
-  }
+  ): LoginCandidate.Result =
+    candidate.fold[LoginCandidate.Result](LoginCandidate.InvalidUsernameOrPassword) {
+      _(User.PasswordAndToken(User.ClearPassword(password), token map User.TotpToken.apply))
+    }
 
-  def saveAuthentication(userId: User.ID, apiVersion: Option[ApiVersion])(
-      implicit req: RequestHeader
+  def saveAuthentication(userId: User.ID, apiVersion: Option[ApiVersion])(implicit
+      req: RequestHeader
   ): Fu[String] =
     userRepo mustConfirmEmail userId flatMap {
       case true => fufail(SecurityApi MustConfirmEmail userId)
       case false =>
         val sessionId = Random secureString 22
+        if (tor isExitNode HTTPRequest.ipAddress(req)) logger.info(s"TOR login $userId")
         store.save(sessionId, userId, req, apiVersion, up = true, fp = none) inject sessionId
     }
 
-  def saveSignup(userId: User.ID, apiVersion: Option[ApiVersion], fp: Option[FingerPrint])(
-      implicit req: RequestHeader
+  def saveSignup(userId: User.ID, apiVersion: Option[ApiVersion], fp: Option[FingerPrint])(implicit
+      req: RequestHeader
   ): Funit = {
-    val sessionId = Random secureString 22
+    val sessionId = lila.common.ThreadLocalRandom nextString 22
     store.save(s"SIG-$sessionId", userId, req, apiVersion, up = false, fp = fp)
   }
 
   def restoreUser(req: RequestHeader): Fu[Option[FingerPrintedUser]] =
-    firewall.accepts(req) ?? {
-      reqSessionId(req) ?? { sessionId =>
-        store userIdAndFingerprint sessionId flatMap {
-          _ ?? { d =>
-            if (d.isOld) store.setDateToNow(sessionId)
-            userRepo byId d.user map { _ map { FingerPrintedUser(_, d.fp) } }
-          }
+    firewall.accepts(req) ?? reqSessionId(req) ?? { sessionId =>
+      store.authInfo(sessionId) flatMap {
+        _ ?? { d =>
+          userRepo byId d.user dmap { _ map { FingerPrintedUser(_, d.hasFp) } }
         }
       }
     }
@@ -119,6 +124,15 @@ final class SecurityApi(
         }
       case None         => fuccess(Left(OAuthServer.ServerOffline))
       case Some(server) => server.auth(req, scopes)
+    }
+
+  def oauthScoped(
+      tokenId: AccessToken.Id,
+      scopes: List[lila.oauth.OAuthScope]
+  ): Fu[lila.oauth.OAuthServer.AuthResult] =
+    tryOauthServer().flatMap {
+      case None         => fuccess(Left(OAuthServer.ServerOffline))
+      case Some(server) => server.auth(tokenId, scopes)
     }
 
   def locatedOpenSessions(userId: User.ID, nb: Int): Fu[List[LocatedSession]] =
@@ -139,31 +153,17 @@ final class SecurityApi(
   def reqSessionId(req: RequestHeader): Option[String] =
     req.session.get(sessionIdKey) orElse req.headers.get(sessionIdKey)
 
-  def recentByIpExists(ip: IpAddress): Fu[Boolean] = store recentByIpExists ip
-
-  def recentByPrintExists(fp: FingerPrint): Fu[Boolean] = store recentByPrintExists fp
-
   def recentUserIdsByFingerHash(fh: FingerHash) = recentUserIdsByField("fp")(fh.value)
 
   def recentUserIdsByIp(ip: IpAddress) = recentUserIdsByField("ip")(ip.value)
 
-  def shareIpOrPrint(u1: User.ID, u2: User.ID): Fu[Boolean] =
-    store.ipsAndFps(List(u1, u2), max = 100) map { ipsAndFps =>
-      val u1s: Set[String] = ipsAndFps
-        .filter(_.user == u1)
-        .flatMap { x =>
-          List(x.ip.value, ~x.fp)
-        }
-        .toSet
-      ipsAndFps.exists { x =>
-        x.user == u2 && {
-          u1s(x.ip.value) || x.fp.??(u1s.contains)
-        }
-      }
-    }
+  def shareAnIpOrFp = store.shareAnIpOrFp _
+
+  def ipUas(ip: IpAddress): Fu[List[String]] =
+    store.coll.distinctEasy[String, List]("ua", $doc("ip" -> ip.value), ReadPreference.secondaryPreferred)
 
   def printUas(fh: FingerHash): Fu[List[String]] =
-    store.coll.distinctEasy[String, List]("ua", $doc("fp" -> fh.value))
+    store.coll.distinctEasy[String, List]("ua", $doc("fp" -> fh.value), ReadPreference.secondaryPreferred)
 
   private def recentUserIdsByField(field: String)(value: String): Fu[List[User.ID]] =
     store.coll.distinctEasy[User.ID, List](
@@ -171,7 +171,8 @@ final class SecurityApi(
       $doc(
         field -> value,
         "date" $gt DateTime.now.minusYears(1)
-      )
+      ),
+      ReadPreference.secondaryPreferred
     )
 }
 

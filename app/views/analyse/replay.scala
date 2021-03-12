@@ -1,17 +1,16 @@
 package views.html.analyse
 
+import bits.dataPanel
 import chess.variant.Crazyhouse
+import controllers.routes
 import play.api.i18n.Lang
 import play.api.libs.json.Json
 
-import bits.dataPanel
 import lila.api.Context
 import lila.app.templating.Environment._
 import lila.app.ui.ScalatagsTemplate._
 import lila.common.String.html.safeJsonValue
 import lila.game.Pov
-
-import controllers.routes
 
 object replay {
 
@@ -40,7 +39,7 @@ object replay {
         c.chat,
         name = trans.spectatorRoom.txt(),
         timeout = c.timeout,
-        withNote = ctx.isAuth,
+        withNoteAge = ctx.isAuth option game.secondsSinceCreation,
         public = true,
         resourceId = lila.chat.Chat.ResourceId(s"game/${c.chat.id}"),
         palantir = ctx.me.exists(_.canPalantir)
@@ -58,8 +57,16 @@ object replay {
         cls := "text",
         href := s"${routes.Game.exportOne(game.id)}?imported=1"
       )(trans.downloadImported()),
-      ctx.noBlind option a(dataIcon := "=", cls := "text embed-howto", target := "_blank")(
-        trans.embedInYourWebsite()
+      ctx.noBlind option frag(
+        a(dataIcon := "=", cls := "text embed-howto")(trans.embedInYourWebsite()),
+        a(
+          dataIcon := "$",
+          cls := "text",
+          targetBlank,
+          href := cdnUrl(routes.Export.gif(pov.gameId, pov.color.name).url)
+        )(
+          "Share as a GIF"
+        )
       )
     )
 
@@ -73,18 +80,20 @@ object replay {
       moreJs = frag(
         analyseTag,
         analyseNvuiTag,
-        embedJsUnsafe(s"""lichess=lichess||{};lichess.analyse=${safeJsonValue(
-          Json.obj(
-            "data"   -> data,
-            "i18n"   -> jsI18n(),
-            "userId" -> ctx.userId,
-            "chat"   -> chatJson,
-            "explorer" -> Json.obj(
-              "endpoint"          -> explorerEndpoint,
-              "tablebaseEndpoint" -> tablebaseEndpoint
+        embedJsUnsafeLoadThen(s"""LichessAnalyse.boot(${safeJsonValue(
+          Json
+            .obj(
+              "data"   -> data,
+              "i18n"   -> jsI18n(),
+              "userId" -> ctx.userId,
+              "chat"   -> chatJson,
+              "explorer" -> Json.obj(
+                "endpoint"          -> explorerEndpoint,
+                "tablebaseEndpoint" -> tablebaseEndpoint
+              )
             )
-          )
-        )}""")
+            .add("hunter" -> isGranted(_.Hunter))
+        )})""")
       ),
       openGraph = povOpenGraph(pov).some
     )(
@@ -92,7 +101,14 @@ object replay {
         main(cls := "analyse")(
           st.aside(cls := "analyse__side")(
             views.html.game
-              .side(pov, initialFen, none, simul = simul, userTv = userTv, bookmarked = bookmarked)
+              .side(
+                pov,
+                initialFen,
+                none,
+                simul = simul,
+                userTv = userTv,
+                bookmarked = bookmarked
+              )
           ),
           chatOption.map(_ => views.html.chat.frag),
           div(cls := "analyse__board main-board")(chessgroundBoard),
@@ -101,7 +117,6 @@ object replay {
           !ctx.blind option frag(
             div(cls := "analyse__underboard")(
               div(cls := "analyse__underboard__panels")(
-                div(cls := "active"),
                 game.analysable option div(cls := "computer-analysis")(
                   if (analysis.isDefined || analysisStarted) div(id := "acpl-chart")
                   else
@@ -113,6 +128,9 @@ object replay {
                         span(cls := "is3 text", dataIcon := "")(trans.requestAComputerAnalysis())
                       )
                     )
+                ),
+                div(cls := "move-times")(
+                  game.turns > 1 option div(id := "movetimes-chart")
                 ),
                 div(cls := "fen-pgn")(
                   div(
@@ -128,9 +146,6 @@ object replay {
                     pgnLinks
                   ),
                   div(cls := "pgn")(pgn)
-                ),
-                div(cls := "move-times")(
-                  game.turns > 1 option div(id := "movetimes-chart")
                 ),
                 cross.map { c =>
                   div(cls := "ctable")(

@@ -3,7 +3,8 @@ package lila.security
 import akka.actor.ActorSystem
 import io.methvin.play.autoconfig._
 import play.api.i18n.Lang
-import play.api.libs.ws.{ WSAuthScheme, WSClient }
+import play.api.libs.ws.DefaultBodyWritables._
+import play.api.libs.ws.{ StandaloneWSClient, WSAuthScheme }
 import scala.concurrent.duration.{ span => _, _ }
 import scalatags.Text.all._
 
@@ -13,13 +14,19 @@ import lila.common.String.html.{ escapeHtml, nl2brUnsafe }
 import lila.i18n.I18nKeys.{ emails => trans }
 
 final class Mailgun(
-    ws: WSClient,
+    ws: StandaloneWSClient,
     config: Mailgun.Config
-)(implicit ec: scala.concurrent.ExecutionContext, system: ActorSystem) {
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    system: ActorSystem
+) {
 
   def send(msg: Mailgun.Message): Funit =
     if (config.apiUrl.isEmpty) {
       logger.info(s"$msg -> No mailgun API URL")
+      funit
+    } else if (msg.to.isNoReply) {
+      logger.warn(s"Can't send ${msg.subject} to noreply email ${msg.to}")
       funit
     } else
       ws.url(s"${config.apiUrl}/messages")
@@ -37,7 +44,7 @@ final class Mailgun(
           }
         )
         .addFailureEffect {
-          case _: java.net.ConnectException => lila.mon.email.send.error("timeout").increment()
+          case _: java.net.ConnectException => lila.mon.email.send.error("timeout").increment().unit
           case _                            =>
         }
         .flatMap {
@@ -79,9 +86,9 @@ object Mailgun {
   object txt {
 
     def serviceNote(implicit lang: Lang): String = s"""
-${trans.common_note.literalTo(lang, List("https://lichess.org")).render}
+${trans.common_note("https://lichess.org").render}
 
-${trans.common_contact.literalTo(lang, List("https://lichess.org/contact")).render}"""
+${trans.common_contact("https://lichess.org/contact").render}"""
   }
 
   object html {
@@ -99,13 +106,20 @@ ${trans.common_contact.literalTo(lang, List("https://lichess.org/contact")).rend
       span(itemprop := "name")("lichess.org/contact")
     )
 
-    def serviceNote(implicit lang: Lang) = publisher(
-      small(
-        trans.common_note.literalTo(lang, List(Mailgun.html.noteLink)),
-        " ",
-        trans.common_contact.literalTo(lang, List(noteContact))
+    def serviceNote(implicit lang: Lang) =
+      publisher(
+        small(
+          trans.common_note(Mailgun.html.noteLink),
+          " ",
+          trans.common_contact(noteContact),
+          " ",
+          lila.i18n.I18nKeys.readAboutOur(
+            a(href := "https://lichess.org/privacy")(
+              lila.i18n.I18nKeys.privacyPolicy()
+            )
+          )
+        )
       )
-    )
 
     def standardEmail(body: String): Frag =
       emailMessage(
@@ -118,14 +132,16 @@ ${trans.common_contact.literalTo(lang, List("https://lichess.org/contact")).rend
       href := "https://lichess.org/"
     )(span(itemprop := "name")("lichess.org"))
 
-    def url(u: String)(implicit lang: Lang) = frag(
-      meta(itemprop := "url", content := u),
-      p(a(itemprop := "target", href := u)(u)),
-      p(trans.common_orPaste.literalTo(lang))
-    )
+    def url(u: String)(implicit lang: Lang) =
+      frag(
+        meta(itemprop := "url", content := u),
+        p(a(itemprop := "target", href := u)(u)),
+        p(trans.common_orPaste(lang))
+      )
 
-    private[Mailgun] def wrap(subject: String, body: Frag): Frag = frag(
-      raw(s"""<!doctype html>
+    private[Mailgun] def wrap(subject: String, body: Frag): Frag =
+      frag(
+        raw(s"""<!doctype html>
 <html>
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
@@ -133,10 +149,10 @@ ${trans.common_contact.literalTo(lang, List("https://lichess.org/contact")).rend
     <title>${escapeHtml(subject)}</title>
   </head>
   <body>"""),
-      body,
-      raw("""
+        body,
+        raw("""
   </body>
 </html>""")
-    )
+      )
   }
 }

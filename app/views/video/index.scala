@@ -9,8 +9,8 @@ import controllers.routes
 
 object index {
 
-  def apply(videos: Paginator[lila.video.VideoView], count: Int, control: lila.video.UserControl)(
-      implicit ctx: Context
+  def apply(videos: Paginator[lila.video.VideoView], count: Long, control: lila.video.UserControl)(implicit
+      ctx: Context
   ) = {
 
     val tagString =
@@ -45,9 +45,9 @@ object index {
         strong(count),
         " videos so far!"
       ),
-      div(cls := "list box__pad infinitescroll")(
+      div(cls := "list box__pad infinite-scroll")(
         videos.currentPageResults.map { bits.card(_, control) },
-        videos.currentPageResults.size < 4 option div(cls := s"not_much nb_${videos.nbResults}")(
+        videos.currentPageResults.sizeIs < 4 option div(cls := s"not_much nb_${videos.nbResults}")(
           if (videos.currentPageResults.isEmpty) "No videos for these tags:"
           else "That's all we got for these tags:",
           control.filter.tags.map { tag =>

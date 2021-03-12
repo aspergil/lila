@@ -4,17 +4,21 @@ package coach
 import lila.api.Context
 import lila.app.templating.Environment._
 import lila.app.ui.ScalatagsTemplate._
+import lila.i18n.LangList
 
 import controllers.routes
 
 object widget {
 
-  def titleName(c: lila.coach.Coach.WithUser) = frag(
-    c.user.title.map { t =>
-      s"$t "
-    },
-    c.user.realNameOrUsername
-  )
+  import trans.coach._
+
+  def titleName(c: lila.coach.Coach.WithUser) =
+    frag(
+      c.user.title.map { t =>
+        s"$t "
+      },
+      c.user.realNameOrUsername
+    )
 
   def pic(c: lila.coach.Coach.WithUser, size: Int) =
     c.coach.picturePath
@@ -24,7 +28,7 @@ object widget {
           height := size,
           cls := "picture",
           src := dbImageUrl(path.value),
-          alt := s"${c.user.titleUsername} lichess coach"
+          alt := s"${c.user.titleUsername} Lichess coach picture"
         )
       }
       .getOrElse {
@@ -32,7 +36,8 @@ object widget {
           width := size,
           height := size,
           cls := "default picture",
-          src := staticUrl("images/placeholder.png")
+          src := assetUrl("images/placeholder.png"),
+          alt := "Default Lichess coach picture"
         )
       }
 
@@ -43,13 +48,16 @@ object widget {
       pic(c, if (link) 300 else 350),
       div(cls := "overview")(
         (if (link) h2 else h1)(cls := "coach-name")(titleName(c)),
-        c.coach.profile.headline.map { h =>
-          p(cls := s"headline ${if (h.size < 60) "small" else if (h.size < 120) "medium" else "large"}")(h)
-        },
+        c.coach.profile.headline
+          .map { h =>
+            p(
+              cls := s"headline ${if (h.length < 60) "small" else if (h.length < 120) "medium" else "large"}"
+            )(h)
+          },
         table(
           tbody(
             tr(
-              th("Location"),
+              th(location()),
               td(
                 profile.nonEmptyLocation.map { l =>
                   span(cls := "location")(l)
@@ -57,7 +65,7 @@ object widget {
                 profile.countryInfo.map { c =>
                   frag(
                     span(cls := "country")(
-                      img(cls := "flag", src := staticUrl(s"images/flags/${c.code}.png")),
+                      img(cls := "flag", src := assetUrl(s"images/flags/${c.code}.png")),
                       " ",
                       c.name
                     )
@@ -65,14 +73,12 @@ object widget {
                 }
               )
             ),
-            c.coach.profile.languages.map { l =>
-              tr(cls := "languages")(
-                th("Languages"),
-                td(l)
-              )
-            },
+            tr(cls := "languages")(
+              th(languages()),
+              td(c.coach.languages.map(LangList.name) mkString ", ")
+            ),
             tr(cls := "rating")(
-              th("Rating"),
+              th(rating()),
               td(
                 profile.fideRating.map { r =>
                   frag("FIDE: ", r)
@@ -86,15 +92,15 @@ object widget {
             ),
             c.coach.profile.hourlyRate.map { r =>
               tr(cls := "rate")(
-                th("Hourly rate"),
+                th(hourlyRate()),
                 td(r)
               )
             },
-            tr(cls := "available")(
-              th("Availability"),
+            !link option tr(cls := "available")(
+              th(availability()),
               td(
-                if (c.coach.available.value) span(cls := "text", dataIcon := "E")("Accepting students")
-                else span(cls := "text", dataIcon := "L")("Not accepting students at the moment")
+                if (c.coach.available.value) span(cls := "text", dataIcon := "E")(accepting())
+                else span(cls := "text", dataIcon := "L")(notAccepting())
               )
             ),
             c.user.seenAt.map { seen =>

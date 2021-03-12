@@ -1,6 +1,6 @@
 export interface RelayData {
   id: string;
-  slug: string;
+  url: string;
   description: string;
   markup?: string;
   credit?: string;
@@ -9,7 +9,8 @@ export interface RelayData {
 
 export interface RelaySync {
   ongoing: boolean;
-  url: string;
+  url?: string;
+  ids?: string;
   log: LogEvent[];
 }
 

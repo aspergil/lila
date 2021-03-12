@@ -11,28 +11,23 @@ import controllers.routes
 
 object index {
 
-  def apply(form: Form[_], paginator: Option[Paginator[lila.game.Game]] = None, nbGames: Int)(
-      implicit ctx: Context
+  import trans.search._
+
+  def apply(form: Form[_], paginator: Option[Paginator[lila.game.Game]] = None, nbGames: Long)(implicit
+      ctx: Context
   ) = {
     val commons = bits of form
     import commons._
     views.html.base.layout(
-      title = trans.advancedSearch.txt(),
+      title = searchInXGames.txt(nbGames.localize, nbGames),
       moreJs = frag(
-        jsTag("search.js"),
+        jsModule("gameSearch"),
         infiniteScrollTag
       ),
-      moreCss = cssTag("search"),
-      openGraph = lila.app.ui
-        .OpenGraph(
-          title = s"Search in ${nbGames.localize} chess games",
-          url = s"$netBaseUrl${routes.Search.index().url}",
-          description = s"Search in ${nbGames.localize} chess games using advanced criterions"
-        )
-        .some
+      moreCss = cssTag("search")
     ) {
       main(cls := "box page-small search")(
-        h1(trans.advancedSearch()),
+        h1(advancedSearch()),
         st.form(
           rel := "nofollow",
           cls := "box__pad search__form",
@@ -68,12 +63,10 @@ object index {
             tr(
               th,
               td(cls := "action")(
-                submitButton(cls := "button")(trans.search()),
+                submitButton(cls := "button")(trans.search.search()),
                 div(cls := "wait")(
                   spinner,
-                  "Searching in ",
-                  nbGames.localize,
-                  " games"
+                  searchInXGames(nbGames.localize)
                 )
               )
             )
@@ -86,16 +79,21 @@ object index {
             if (pager.nbResults > 0)
               frag(
                 div(cls := "search__status box__pad")(
-                  strong(pager.nbResults.localize, " games found"),
+                  strong(xGamesFound(pager.nbResults.localize, pager.nbResults)),
                   " • ",
                   permalink
                 ),
-                div(cls := "search__rows")(
-                  pagerNext(pager, np => routes.Search.index(np).url),
-                  views.html.game.widgets(pager.currentPageResults)
+                div(cls := "search__rows infinite-scroll")(
+                  views.html.game.widgets(pager.currentPageResults),
+                  pagerNext(pager, np => routes.Search.index(np).url)
                 )
               )
-            else div(cls := "search__status box__pad")(strong("No game found"), " • ", permalink)
+            else
+              div(cls := "search__status box__pad")(
+                strong(xGamesFound(0)),
+                " • ",
+                permalink
+              )
           }
         )
       )

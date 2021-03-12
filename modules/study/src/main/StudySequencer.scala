@@ -2,14 +2,19 @@ package lila.study
 
 import scala.concurrent.duration._
 
-import lila.common.WorkQueues
+import lila.hub.DuctSequencers
 
 final private class StudySequencer(
     studyRepo: StudyRepo,
     chapterRepo: ChapterRepo
-)(implicit ec: scala.concurrent.ExecutionContext, mat: akka.stream.Materializer, mode: play.api.Mode) {
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    system: akka.actor.ActorSystem,
+    mode: play.api.Mode
+) {
 
-  private val workQueue = new WorkQueues(256, 5 minutes, "study")
+  private val workQueue =
+    new DuctSequencers(maxSize = 64, expiration = 1 minute, timeout = 10 seconds, name = "study")
 
   def sequenceStudy(studyId: Study.Id)(f: Study => Funit): Funit =
     workQueue(studyId.value) {
@@ -22,10 +27,13 @@ final private class StudySequencer(
       f: Study.WithChapter => Funit
   ): Funit =
     sequenceStudy(studyId) { study =>
-      chapterRepo.byId(chapterId) flatMap {
-        _ ?? { chapter =>
-          f(Study.WithChapter(study, chapter))
+      chapterRepo
+        .byId(chapterId)
+        .flatMap {
+          _.filter(_.studyId == studyId) ?? { chapter =>
+            f(Study.WithChapter(study, chapter))
+          }
         }
-      }
+        .mon(_.study.sequencer.chapterTime)
     }
 }

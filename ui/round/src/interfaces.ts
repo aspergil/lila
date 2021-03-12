@@ -2,9 +2,8 @@ import { VNode } from 'snabbdom/vnode';
 import { GameData, Status } from 'game';
 import { ClockData, Seconds, Centis } from './clock/clockCtrl';
 import { CorresClockData } from './corresClock/corresClockCtrl';
-import { TourPlayer } from './tourStanding';
 import RoundController from './ctrl';
-import { ChatPlugin } from 'chat';
+import { ChatCtrl, ChatPlugin } from 'chat';
 import * as cg from 'chessground/types';
 
 export type MaybeVNode = VNode | null | undefined;
@@ -21,6 +20,7 @@ export interface NvuiPlugin {
 }
 
 export interface SocketOpts {
+  sign: string;
   ackable: boolean;
   withLag?: boolean;
   millis?: number;
@@ -36,12 +36,12 @@ export interface SocketDrop {
   b?: 1;
 }
 
-export type EncodedDests = string | {
-  [key: string]: string;
-};
-export interface DecodedDests {
-  [key: string]: cg.Key[];
-}
+export type EncodedDests =
+  | string
+  | {
+      [key: string]: string;
+    };
+export type Dests = cg.Dests;
 
 export interface RoundData extends GameData {
   clock?: ClockData;
@@ -90,15 +90,18 @@ export interface RoundOpts {
   element: HTMLElement;
   crosstableEl: HTMLElement;
   i18n: any;
-  chat?: Chat;
-  tour?: TourPlayer[];
+  chat?: ChatOpts;
 }
 
-export interface Chat {
+export interface ChatOpts {
   preset: 'start' | 'end' | undefined;
   parseMoves?: boolean;
   plugin?: ChatPlugin;
   alwaysEnabled: boolean;
+  noteId?: string;
+  noteAge?: number;
+  noteText?: string;
+  instance?: Promise<ChatCtrl>;
 }
 
 export interface Step {
@@ -116,7 +119,7 @@ export interface ApiMove extends Step {
     white: Seconds;
     black: Seconds;
     lag?: Centis;
-  }
+  };
   status: Status;
   winner?: Color;
   check: boolean;
@@ -130,11 +133,11 @@ export interface ApiMove extends Step {
     key: cg.Key;
     pieceClass: cg.Role;
   };
-  enpassant: {
+  enpassant?: {
     key: cg.Key;
     color: Color;
   };
-  castle: {
+  castle?: {
     king: [cg.Key, cg.Key];
     rook: [cg.Key, cg.Key];
     color: Color;
@@ -154,11 +157,10 @@ export interface ApiEnd {
   clock?: {
     wc: Centis;
     bc: Centis;
-  }
+  };
 }
 
-export interface StepCrazy extends Untyped {
-}
+export interface StepCrazy extends Untyped {}
 
 export interface Pref {
   animationDuration: number;

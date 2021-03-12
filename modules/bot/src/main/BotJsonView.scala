@@ -1,5 +1,6 @@
 package lila.bot
 
+import play.api.i18n.Lang
 import play.api.libs.json._
 
 import lila.common.Json.jodaWrites
@@ -12,9 +13,9 @@ final class BotJsonView(
     rematches: lila.game.Rematches
 )(implicit ec: scala.concurrent.ExecutionContext) {
 
-  def gameFull(game: Game): Fu[JsObject] = gameRepo.withInitialFen(game) flatMap gameFull
+  def gameFull(game: Game)(implicit lang: Lang): Fu[JsObject] = gameRepo.withInitialFen(game) flatMap gameFull
 
-  def gameFull(wf: Game.WithInitialFen): Fu[JsObject] =
+  def gameFull(wf: Game.WithInitialFen)(implicit lang: Lang): Fu[JsObject] =
     gameState(wf) map { state =>
       gameImmutable(wf) ++ Json.obj(
         "type"  -> "gameFull",
@@ -22,7 +23,7 @@ final class BotJsonView(
       )
     }
 
-  def gameImmutable(wf: Game.WithInitialFen): JsObject = {
+  def gameImmutable(wf: Game.WithInitialFen)(implicit lang: Lang): JsObject = {
     import wf._
     Json
       .obj(
@@ -31,7 +32,7 @@ final class BotJsonView(
         "clock"   -> game.clock.map(_.config),
         "speed"   -> game.speed.key,
         "perf" -> game.perfType.map { p =>
-          Json.obj("name" -> p.name)
+          Json.obj("name" -> p.trans)
         },
         "rated"      -> game.rated,
         "createdAt"  -> game.createdAt,
@@ -44,28 +45,31 @@ final class BotJsonView(
 
   def gameState(wf: Game.WithInitialFen): Fu[JsObject] = {
     import wf._
-    chess.format.UciDump(game.pgnMoves, fen.map(_.value), game.variant).future map { uciMoves =>
+    chess.format.UciDump(game.pgnMoves, fen, game.variant).toFuture map { uciMoves =>
       Json
         .obj(
-          "type"  -> "gameState",
-          "moves" -> uciMoves.mkString(" "),
-          "wtime" -> millisOf(game.whitePov),
-          "btime" -> millisOf(game.blackPov),
-          "winc"  -> game.clock.??(_.config.increment.millis),
-          "binc"  -> game.clock.??(_.config.increment.millis),
-          "bdraw" -> game.blackPlayer.isOfferingDraw,
-          "wdraw" -> game.whitePlayer.isOfferingDraw
+          "type"   -> "gameState",
+          "moves"  -> uciMoves.mkString(" "),
+          "wtime"  -> millisOf(game.whitePov),
+          "btime"  -> millisOf(game.blackPov),
+          "winc"   -> game.clock.??(_.config.increment.millis),
+          "binc"   -> game.clock.??(_.config.increment.millis),
+          "wdraw"  -> game.whitePlayer.isOfferingDraw,
+          "bdraw"  -> game.blackPlayer.isOfferingDraw,
+          "status" -> game.status.name
         )
+        .add("winner" -> game.winnerColor)
         .add("rematch" -> rematches.of(game.id))
     }
   }
 
-  def chatLine(username: String, text: String, player: Boolean) = Json.obj(
-    "type"     -> "chatLine",
-    "room"     -> (if (player) "player" else "spectator"),
-    "username" -> username,
-    "text"     -> text
-  )
+  def chatLine(username: String, text: String, player: Boolean) =
+    Json.obj(
+      "type"     -> "chatLine",
+      "room"     -> (if (player) "player" else "spectator"),
+      "username" -> username,
+      "text"     -> text
+    )
 
   private def playerJson(pov: Pov) = {
     val light = pov.player.userId flatMap lightUserApi.sync
@@ -80,7 +84,10 @@ final class BotJsonView(
   }
 
   private def millisOf(pov: Pov): Int =
-    pov.game.clock.fold(Int.MaxValue)(_.remainingTime(pov.color).millis.toInt)
+    pov.game.clock
+      .map(_.remainingTime(pov.color).millis.toInt)
+      .orElse(pov.game.correspondenceClock.map(_.remainingTime(pov.color).toInt * 1000))
+      .getOrElse(Int.MaxValue)
 
   implicit private val clockConfigWriter: OWrites[chess.Clock.Config] = OWrites { c =>
     Json.obj(

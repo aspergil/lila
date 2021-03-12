@@ -3,7 +3,7 @@ package views.html.board
 import play.api.i18n.Lang
 
 import lila.app.templating.Environment._
-import lila.i18n.{ I18nKeys => trans }
+import lila.i18n.{ MessageKey, I18nKeys => trans }
 
 object userAnalysisI18n {
 
@@ -12,19 +12,20 @@ object userAnalysisI18n {
       withExplorer: Boolean = true,
       withForecast: Boolean = false,
       withAdvantageChart: Boolean = false
-  )(implicit lang: Lang) = i18nJsObject(
-    baseTranslations ++ {
-      withCeval ?? cevalTranslations
-    } ++ {
-      withExplorer ?? explorerTranslations
-    } ++ {
-      withForecast ?? forecastTranslations
-    } ++ {
-      withAdvantageChart ?? advantageChartTranslations
-    }
-  )
+  )(implicit lang: Lang) =
+    i18nJsObject(
+      baseTranslations ++ {
+        withCeval ?? cevalTranslations
+      } ++ {
+        withExplorer ?? explorerTranslations
+      } ++ {
+        withForecast ?? forecastTranslations
+      } ++ {
+        withAdvantageChart ?? advantageChartTranslations
+      }
+    )
 
-  private val baseTranslations = Vector(
+  private val baseTranslations: Vector[MessageKey] = Vector(
     trans.analysis,
     trans.flipBoard,
     trans.backToGame,
@@ -36,7 +37,8 @@ object userAnalysisI18n {
     trans.whiteLeftTheGame,
     trans.blackLeftTheGame,
     trans.draw,
-    trans.timeOut,
+    trans.whiteTimeOut,
+    trans.blackTimeOut,
     trans.playingRightNow,
     trans.whiteIsVictorious,
     trans.blackIsVictorious,
@@ -54,7 +56,6 @@ object userAnalysisI18n {
     trans.inaccuracies,
     trans.mistakes,
     trans.blunders,
-    trans.goodMove,
     trans.viewTheSolution,
     trans.spectators,
     // action menu
@@ -65,7 +66,7 @@ object userAnalysisI18n {
     trans.playWithTheMachine,
     trans.playWithAFriend,
     trans.openStudy,
-    trans.preferences,
+    trans.preferences.preferences,
     trans.inlineNotation,
     trans.replayMode,
     trans.slow,
@@ -79,7 +80,7 @@ object userAnalysisI18n {
     trans.forceVariation,
     // practice (also uses checkmate, draw)
     trans.practiceWithComputer,
-    trans.goodMove,
+    trans.puzzle.goodMove,
     trans.inaccuracy,
     trans.mistake,
     trans.blunder,
@@ -98,11 +99,11 @@ object userAnalysisI18n {
     trans.getAHint,
     trans.evaluatingYourMove,
     // gamebook
-    trans.findTheBestMoveForWhite,
-    trans.findTheBestMoveForBlack
-  )
+    trans.puzzle.findTheBestMoveForWhite,
+    trans.puzzle.findTheBestMoveForBlack
+  ).map(_.key)
 
-  private val cevalTranslations = Vector(
+  private val cevalTranslations: Vector[MessageKey] = Vector(
     // also uses gameOver
     trans.depthX,
     trans.usingServerAnalysis,
@@ -122,9 +123,9 @@ object userAnalysisI18n {
     trans.multipleLines,
     trans.cpus,
     trans.memory
-  )
+  ).map(_.key)
 
-  private val explorerTranslations = Vector(
+  private val explorerTranslations: Vector[MessageKey] = Vector(
     // also uses gameOver, checkmate, stalemate, draw, variantEnding
     trans.openingExplorerAndTablebase,
     trans.openingExplorer,
@@ -156,21 +157,21 @@ object userAnalysisI18n {
     trans.winPreventedBy50MoveRule,
     trans.lossSavedBy50MoveRule,
     trans.allSet
-  )
+  ).map(_.key)
 
-  private val forecastTranslations = Vector(
+  private val forecastTranslations: Vector[MessageKey] = Vector(
     trans.conditionalPremoves,
     trans.addCurrentVariation,
     trans.playVariationToCreateConditionalPremoves,
     trans.noConditionalPremoves,
     trans.playX,
     trans.andSaveNbPremoveLines
-  )
+  ).map(_.key)
 
-  private val advantageChartTranslations = Vector(
+  private val advantageChartTranslations: Vector[MessageKey] = Vector(
     trans.advantage,
     trans.opening,
     trans.middlegame,
     trans.endgame
-  )
+  ).map(_.key)
 }

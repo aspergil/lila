@@ -11,8 +11,9 @@
   z-index: z('site-header');
   max-width: 1800px;
   margin: 0 auto;
-
+  user-select: none;
   --dropdown-top: 40px;
+
   @include breakpoint($mq-site-header-tall) {
     --dropdown-top: 60px;
   }

@@ -5,6 +5,7 @@ export interface GameData {
   spectator?: boolean;
   tournament?: Tournament;
   simul?: Simul;
+  swiss?: Swiss;
   takebackable: boolean;
   moretimeable: boolean;
   clock?: Clock;
@@ -36,9 +37,19 @@ export interface Status {
   name: StatusName;
 }
 
-export type StatusName = 'started' | 'aborted' | 'mate' | 'resign' |
-                         'stalemate' | 'timeout' | 'draw' | 'outoftime' |
-                         'noStart' | 'cheat' | 'variantEnd';
+export type StatusName =
+  | 'started'
+  | 'aborted'
+  | 'mate'
+  | 'resign'
+  | 'stalemate'
+  | 'timeout'
+  | 'draw'
+  | 'outoftime'
+  | 'noStart'
+  | 'cheat'
+  | 'variantEnd'
+  | 'unknownFinish';
 
 export type StatusId = number;
 
@@ -76,6 +87,20 @@ export interface Tournament {
   ranks?: TournamentRanks;
   running?: boolean;
   nbSecondsForFirstMove?: number;
+  top?: TourPlayer[];
+  team?: Team;
+}
+
+export interface TourPlayer {
+  n: string; // name
+  s: number; // score
+  t?: string; // title
+  f: boolean; // fire
+  w: boolean; // withdraw
+}
+
+export interface Team {
+  name: string;
 }
 
 export interface Simul {
@@ -83,6 +108,12 @@ export interface Simul {
   name: string;
   hostId: string;
   nbPlaying: number;
+}
+
+export interface Swiss {
+  id: string;
+  running?: boolean;
+  ranks?: TournamentRanks;
 }
 
 export interface Clock {
@@ -107,7 +138,7 @@ export interface PlayerUser {
   title?: string;
   perfs: {
     [key: string]: Perf;
-  }
+  };
 }
 
 export interface Perf {

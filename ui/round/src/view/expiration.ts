@@ -1,4 +1,4 @@
-import { h } from 'snabbdom'
+import { h } from 'snabbdom';
 import { MaybeVNode } from '../interfaces';
 import RoundController from '../ctrl';
 import { playable } from 'game';
@@ -6,7 +6,7 @@ import { isPlayerTurn } from 'game';
 
 let rang = false;
 
-export default function(ctrl: RoundController): MaybeVNode {
+export default function (ctrl: RoundController): MaybeVNode {
   const d = playable(ctrl.data) && ctrl.data.expiration;
   if (!d) return;
   const timeLeft = Math.max(0, d.movedAt - Date.now() + d.millisToMove),
@@ -14,14 +14,18 @@ export default function(ctrl: RoundController): MaybeVNode {
     myTurn = isPlayerTurn(ctrl.data),
     emerg = myTurn && timeLeft < 8000;
   if (!rang && emerg) {
-    window.lichess.sound.lowtime();
+    lichess.sound.play('lowTime');
     rang = true;
   }
   const side = myTurn != ctrl.flip ? 'bottom' : 'top';
-  return h('div.expiration.expiration-' + side, {
-    class: {
-      emerg,
-      'bar-glider': myTurn
-    }
-  }, ctrl.trans.vdomPlural('nbSecondsToPlayTheFirstMove', secondsLeft, h('strong', '' + secondsLeft)));
+  return h(
+    'div.expiration.expiration-' + side,
+    {
+      class: {
+        emerg,
+        'bar-glider': myTurn,
+      },
+    },
+    ctrl.trans.vdomPlural('nbSecondsToPlayTheFirstMove', secondsLeft, h('strong', '' + secondsLeft))
+  );
 }

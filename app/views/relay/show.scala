@@ -26,13 +26,12 @@ object show {
       moreJs = frag(
         analyseTag,
         analyseNvuiTag,
-        embedJsUnsafe(s"""lichess=window.lichess||{};lichess.relay=${safeJsonValue(
+        embedJsUnsafe(s"""lichess.relay=${safeJsonValue(
           Json.obj(
-            "relay" -> data.relay,
-            "study" -> data.study,
-            "data"  -> data.analysis,
-            "i18n" -> (board
-              .userAnalysisI18n(withAdvantageChart = true) ++ i18nFullDbJsObject(lila.i18n.I18nDb.Study)),
+            "relay"    -> data.relay,
+            "study"    -> data.study.add("admin" -> isGranted(_.StudyAdmin)),
+            "data"     -> data.analysis,
+            "i18n"     -> views.html.study.jsI18n(),
             "tagTypes" -> lila.study.PgnTags.typesToString,
             "userId"   -> ctx.userId,
             "chat" -> chatOption.map(c =>
@@ -57,7 +56,7 @@ object show {
       ),
       chessground = false,
       zoomable = true,
-      csp = defaultCsp.withWebAssembly.withTwitch.some,
+      csp = defaultCsp.withWebAssembly.some,
       openGraph = lila.app.ui
         .OpenGraph(
           title = r.name,

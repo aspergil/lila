@@ -1,4 +1,4 @@
-import { VNode } from 'snabbdom/vnode'
+import { VNode } from 'snabbdom/vnode';
 
 export type MaybeVNode = VNode | string | null | undefined;
 export type MaybeVNodes = MaybeVNode[];
@@ -7,8 +7,7 @@ interface Untyped {
   [key: string]: any;
 }
 
-export interface StandingPlayer extends Untyped {
-}
+export interface StandingPlayer extends Untyped {}
 
 export interface Standing {
   failed?: boolean;
@@ -24,13 +23,43 @@ export interface TournamentOpts extends Untyped {
 export interface TournamentData extends Untyped {
   teamBattle?: TeamBattle;
   teamStanding?: RankedTeam[];
+  myTeam?: RankedTeam;
+  featured?: FeaturedGame;
+}
+
+export interface FeaturedGame {
+  id: string;
+  fen: Fen;
+  orientation: Color;
+  lastMove: string;
+  white: FeaturedPlayer;
+  black: FeaturedPlayer;
+  c?: {
+    white: number;
+    black: number;
+  };
+  clock?: {
+    // temporary BC, remove me
+    white: number;
+    black: number;
+  };
+  winner?: Color;
+}
+
+interface FeaturedPlayer {
+  rank: number;
+  name: string;
+  rating: number;
+  title?: string;
+  berserk?: boolean;
 }
 
 export interface TeamBattle {
   teams: {
-    [id: string]: string
+    [id: string]: string;
   };
   joinWith: string[];
+  hasMoreThanTenTeams?: boolean;
 }
 
 export interface RankedTeam {
@@ -42,15 +71,15 @@ export interface RankedTeam {
 
 export interface TeamPlayer {
   user: {
-    name: string
+    name: string;
   };
-  score: number
+  score: number;
 }
 
 export type Page = StandingPlayer[];
 
 export interface Pages {
-  [n: number]: Page
+  [n: number]: Page;
 }
 
 export interface PlayerInfo {
@@ -77,16 +106,16 @@ export interface TeamPlayer {
 
 export interface Duel {
   id: string;
-  p: [DuelPlayer, DuelPlayer]
+  p: [DuelPlayer, DuelPlayer];
 }
 
 export interface DuelPlayer {
   n: string; // name
-  r: number // rating
-  k: number // rank
-  t?: string // title
+  r: number; // rating
+  k: number; // rank
+  t?: string; // title
 }
 
 export interface DuelTeams {
-  [userId: string]: string
+  [userId: string]: string;
 }

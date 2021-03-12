@@ -20,6 +20,7 @@ object index {
             submitButton(cls := "button frameless", st.title := "New access token", dataIcon := "O")
           )
         ),
+        standardFlash(cls := "box__pad"),
         p(cls := "box__pad")(
           "You can make OAuth requests without going through the authorization code flow.",
           br,
@@ -72,7 +73,7 @@ object index {
                 }
               ),
               td(cls := "action")(
-                postForm(action := routes.OAuthToken.delete(t.id.value))(
+                postForm(action := routes.OAuthToken.delete(t.publicId.stringify))(
                   submitButton(
                     cls := "button button-red button-empty confirm",
                     st.title := "Delete this access token"

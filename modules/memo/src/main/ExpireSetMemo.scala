@@ -1,21 +1,22 @@
 package lila.memo
 
 import com.github.blemale.scaffeine.Cache
-import com.github.ghik.silencer.silent
-import scala.concurrent.duration.Duration
+import scala.annotation.nowarn
+import scala.concurrent.duration.FiniteDuration
 
-final class ExpireSetMemo(ttl: Duration) {
+final class ExpireSetMemo(ttl: FiniteDuration) {
 
   private val cache: Cache[String, Boolean] = CacheApi.scaffeineNoScheduler
     .expireAfterWrite(ttl)
-    .build[String, Boolean]
+    .build[String, Boolean]()
 
-  @silent("comparing") def get(key: String): Boolean = cache.underlying.getIfPresent(key) != null
+  @nowarn def get(key: String): Boolean = cache.underlying.getIfPresent(key) != null
 
-  def intersect(keys: Iterable[String]): Set[String] = keys.nonEmpty ?? {
-    val res = cache getAllPresent keys
-    keys filter res.contains toSet
-  }
+  def intersect(keys: Iterable[String]): Set[String] =
+    keys.nonEmpty ?? {
+      val res = cache getAllPresent keys
+      keys filter res.contains toSet
+    }
 
   def put(key: String) = cache.put(key, true)
 
@@ -25,9 +26,9 @@ final class ExpireSetMemo(ttl: Duration) {
 
   def removeAll(keys: Iterable[String]) = cache invalidateAll keys
 
-  def keys: Iterable[String] = cache.asMap.keys
+  def keys: Iterable[String] = cache.asMap().keys
 
   def keySet: Set[String] = keys.toSet
 
-  def count = cache.estimatedSize.toInt
+  def count = cache.estimatedSize().toInt
 }

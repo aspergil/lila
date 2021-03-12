@@ -9,49 +9,50 @@ case class ContentSecurityPolicy(
     workerSrc: List[String],
     imgSrc: List[String],
     scriptSrc: List[String],
-    baseUri: List[String],
-    reportTo: List[String]
+    baseUri: List[String]
 ) {
 
   def withNonce(nonce: Nonce) = copy(scriptSrc = nonce.scriptSrc :: scriptSrc)
 
-  def withWebAssembly = copy(
-    scriptSrc = "'unsafe-eval'" :: scriptSrc
-  )
+  def withWebAssembly =
+    copy(
+      scriptSrc = "'unsafe-eval'" :: scriptSrc
+    )
 
-  def withStripe = copy(
-    connectSrc = "https://*.stripe.com" :: connectSrc,
-    scriptSrc = "https://*.stripe.com" :: scriptSrc,
-    frameSrc = "https://*.stripe.com" :: frameSrc
-  )
+  def withStripe =
+    copy(
+      connectSrc = "https://*.stripe.com" :: connectSrc,
+      scriptSrc = "https://*.stripe.com" :: scriptSrc,
+      frameSrc = "https://*.stripe.com" :: frameSrc
+    )
 
-  def withTwitch = copy(
-    defaultSrc = Nil,
-    connectSrc = "https://www.twitch.tv" :: "https://www-cdn.jtvnw.net" :: connectSrc,
-    styleSrc = Nil,
-    fontSrc = Nil,
-    frameSrc = Nil,
-    workerSrc = Nil,
-    imgSrc = Nil,
-    scriptSrc = Nil
-  )
+  def finalizeWithTwitch =
+    copy(
+      defaultSrc = Nil,
+      connectSrc = "https://www.twitch.tv" :: "https://www-cdn.jtvnw.net" :: connectSrc,
+      styleSrc = Nil,
+      fontSrc = Nil,
+      frameSrc = Nil,
+      workerSrc = Nil,
+      scriptSrc = Nil
+    )
 
-  def withTwitter = copy(
-    scriptSrc = "https://platform.twitter.com" :: "https://*.twimg.com" :: scriptSrc,
-    frameSrc = "https://twitter.com" :: "https://platform.twitter.com" :: frameSrc,
-    styleSrc = "https://platform.twitter.com" :: styleSrc
-  )
+  def withTwitter =
+    copy(
+      scriptSrc = "https://platform.twitter.com" :: "https://*.twimg.com" :: scriptSrc,
+      frameSrc = "https://twitter.com" :: "https://platform.twitter.com" :: frameSrc,
+      styleSrc = "https://platform.twitter.com" :: styleSrc
+    )
 
   def withGoogleForm = copy(frameSrc = "https://docs.google.com" :: frameSrc)
 
-  def withRecaptcha = copy(
-    scriptSrc = "https://www.google.com" :: scriptSrc,
-    frameSrc = "https://www.google.com" :: frameSrc
-  )
+  def withRecaptcha =
+    copy(
+      scriptSrc = "https://www.google.com" :: scriptSrc,
+      frameSrc = "https://www.google.com" :: frameSrc
+    )
 
-  def withPeer = copy(
-    connectSrc = "wss://0.peerjs.com" :: connectSrc
-  )
+  def withPeer = copy(connectSrc = "wss://0.peerjs.com" :: connectSrc)
 
   private def withPrismicEditor(maybe: Boolean): ContentSecurityPolicy =
     if (maybe)
@@ -64,6 +65,8 @@ case class ContentSecurityPolicy(
 
   def withPrismic(editor: Boolean): ContentSecurityPolicy = withPrismicEditor(editor).withTwitter
 
+  def withAnyWs = copy(connectSrc = "ws:" :: "wss:" :: connectSrc)
+
   override def toString: String =
     List(
       "default-src " -> defaultSrc,
@@ -74,8 +77,7 @@ case class ContentSecurityPolicy(
       "worker-src "  -> workerSrc,
       "img-src "     -> imgSrc,
       "script-src "  -> scriptSrc,
-      "base-uri "    -> baseUri,
-      "report-to "   -> reportTo
+      "base-uri "    -> baseUri
     ) collect {
       case (directive, sources) if sources.nonEmpty =>
         sources.mkString(directive, " ", ";")

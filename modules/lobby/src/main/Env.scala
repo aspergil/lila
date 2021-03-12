@@ -19,8 +19,7 @@ final class Env(
     poolApi: lila.pool.PoolApi,
     cacheApi: lila.memo.CacheApi,
     remoteSocketApi: lila.socket.RemoteSocket
-)(
-    implicit
+)(implicit
     ec: scala.concurrent.ExecutionContext,
     system: akka.actor.ActorSystem,
     idGenerator: lila.game.IdGenerator
@@ -37,6 +36,8 @@ final class Env(
 
   lazy val seekApi = wire[SeekApi]
 
+  lazy val boardApiHookStream = wire[BoardApiHookStream]
+
   private lazy val lobbyTrouper = LobbyTrouper.start(
     broomPeriod = 2 seconds,
     resyncIdsPeriod = 25 seconds
@@ -48,9 +49,9 @@ final class Env(
 
   private lazy val biter = wire[Biter]
 
-  wire[LobbySocket]
+  val socket = wire[LobbySocket]
 
-  lila.common.Bus.subscribeFun("abortGame") {
-    case lila.game.actorApi.AbortedBy(pov) => abortListener(pov)
+  lila.common.Bus.subscribeFun("abortGame") { case lila.game.actorApi.AbortedBy(pov) =>
+    abortListener(pov).unit
   }
 }

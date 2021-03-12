@@ -3,13 +3,10 @@ package lila.i18n
 import play.api.mvc.RequestHeader
 import play.api.i18n.Lang
 
-import lila.user.User
-
 object I18nLangPicker {
 
-  def apply(req: RequestHeader, user: Option[User]): Lang =
-    user
-      .flatMap(_.lang)
+  def apply(req: RequestHeader, userLang: Option[String] = None): Lang =
+    userLang
       .orElse(req.session get "lang")
       .flatMap(Lang.get)
       .flatMap(findCloser)
@@ -28,13 +25,18 @@ object I18nLangPicker {
   def byStr(str: String): Option[Lang] =
     Lang get str flatMap findCloser
 
+  def sortFor(langs: List[Lang], req: RequestHeader): List[Lang] = {
+    val mine = allFromRequestHeaders(req).zipWithIndex.toMap
+    langs.sortBy { mine.getOrElse(_, Int.MaxValue) }
+  }
+
   private val defaultByLanguage: Map[String, Lang] =
-    I18nDb.langs.foldLeft(Map.empty[String, Lang]) {
-      case (acc, lang) => acc + (lang.language -> lang)
+    Registry.langs.foldLeft(Map.empty[String, Lang]) { case (acc, lang) =>
+      acc + (lang.language -> lang)
     }
 
   def findCloser(to: Lang): Option[Lang] =
-    if (I18nDb.langs contains to) Some(to)
+    if (Registry.langs contains to) Some(to)
     else
       defaultByLanguage.get(to.language) orElse
         lichessCodes.get(to.language)

@@ -3,51 +3,23 @@ package lila.i18n
 import play.api.i18n.Lang
 import scalatags.Text.RawFrag
 
-sealed trait I18nKey {
+final class I18nKey(val key: String) {
 
-  val key: String
+  def apply(args: Any*)(implicit lang: Lang): RawFrag =
+    Translator.frag.literal(key, args, lang)
 
-  def literalTo(lang: Lang, args: Seq[Any] = Seq.empty): RawFrag
-  def pluralTo(lang: Lang, count: Count, args: Seq[Any] = Nil): RawFrag
+  def plural(count: Count, args: Any*)(implicit lang: Lang): RawFrag =
+    Translator.frag.plural(key, count, args, lang)
 
-  def literalTxtTo(lang: Lang, args: Seq[Any] = Seq.empty): String
-  def pluralTxtTo(lang: Lang, count: Count, args: Seq[Any] = Nil): String
+  def pluralSame(count: Int)(implicit lang: Lang): RawFrag = plural(count, count)
 
-  /* Implicit context convenience functions */
+  def txt(args: Any*)(implicit lang: Lang): String =
+    Translator.txt.literal(key, args, lang)
 
-  // frag
-  def apply(args: Any*)(implicit lang: Lang): RawFrag                = literalTo(lang, args)
-  def plural(count: Count, args: Any*)(implicit lang: Lang): RawFrag = pluralTo(lang, count, args)
-  def pluralSame(count: Int)(implicit lang: Lang): RawFrag           = plural(count, count)
+  def pluralTxt(count: Count, args: Any*)(implicit lang: Lang): String =
+    Translator.txt.plural(key, count, args, lang)
 
-  // txt
-  def txt(args: Any*)(implicit lang: Lang): String                     = literalTxtTo(lang, args)
-  def pluralTxt(count: Count, args: Any*)(implicit lang: Lang): String = pluralTxtTo(lang, count, args)
-  def pluralSameTxt(count: Int)(implicit lang: Lang): String           = pluralTxt(count, count)
-}
-
-final class Translated(val key: String, val db: I18nDb.Ref) extends I18nKey {
-
-  def literalTo(lang: Lang, args: Seq[Any] = Nil): RawFrag =
-    Translator.frag.literal(key, db, args, lang)
-
-  def pluralTo(lang: Lang, count: Count, args: Seq[Any] = Nil): RawFrag =
-    Translator.frag.plural(key, db, count, args, lang)
-
-  def literalTxtTo(lang: Lang, args: Seq[Any] = Nil): String =
-    Translator.txt.literal(key, db, args, lang)
-
-  def pluralTxtTo(lang: Lang, count: Count, args: Seq[Any] = Nil): String =
-    Translator.txt.plural(key, db, count, args, lang)
-}
-
-final class Untranslated(val key: String) extends I18nKey {
-
-  def literalTo(lang: Lang, args: Seq[Any])              = RawFrag(key)
-  def pluralTo(lang: Lang, count: Count, args: Seq[Any]) = RawFrag(key)
-
-  def literalTxtTo(lang: Lang, args: Seq[Any])              = key
-  def pluralTxtTo(lang: Lang, count: Count, args: Seq[Any]) = key
+  def pluralSameTxt(count: Int)(implicit lang: Lang): String = pluralTxt(count, count)
 }
 
 object I18nKey {

@@ -18,23 +18,21 @@ final private[timeline] class Push(
 
   implicit def ec = context.dispatcher
 
-  def receive = {
-
-    case Propagate(data, propagations) =>
-      propagate(propagations) flatMap { users =>
-        unsubApi.filterUnsub(data.channel, users)
-      } foreach { users =>
-        if (users.nonEmpty)
-          makeEntry(users, data) >>-
-            lila.common.Bus.publish(ReloadTimelines(users), "lobbySocket")
-        lila.mon.timeline.notification.increment(users.size)
-      }
+  def receive = { case Propagate(data, propagations) =>
+    propagate(propagations) flatMap { users =>
+      unsubApi.filterUnsub(data.channel, users)
+    } foreach { users =>
+      if (users.nonEmpty)
+        makeEntry(users, data) >>-
+          lila.common.Bus.publish(ReloadTimelines(users), "lobbySocket")
+      lila.mon.timeline.notification.increment(users.size)
+    }
   }
 
   private def propagate(propagations: List[Propagation]): Fu[List[User.ID]] =
     scala.concurrent.Future.traverse(propagations) {
       case Users(ids)    => fuccess(ids)
-      case Followers(id) => relationApi.fetchFollowersFromSecondary(id)
+      case Followers(id) => relationApi.freshFollowersFromSecondary(id)
       case Friends(id)   => relationApi.fetchFriends(id)
       case ExceptUser(_) => fuccess(Nil)
       case ModsOnly(_)   => fuccess(Nil)
@@ -43,7 +41,7 @@ final private[timeline] class Push(
         case (fus, ExceptUser(id)) => fus.dmap(_.filter(id !=))
         case (fus, ModsOnly(true)) =>
           fus flatMap { us =>
-            userRepo.userIdsWithRoles(modPermissions.map(_.name)) dmap { userIds =>
+            userRepo.userIdsWithRoles(modPermissions.map(_.dbKey)) dmap { userIds =>
               us filter userIds.contains
             }
           }
@@ -51,12 +49,12 @@ final private[timeline] class Push(
       }
     }
 
-  private def modPermissions = List(
-    Permission.ModNote,
-    Permission.Hunter,
-    Permission.Admin,
-    Permission.SuperAdmin
-  )
+  private def modPermissions =
+    List(
+      Permission.ModNote,
+      Permission.Admin,
+      Permission.SuperAdmin
+    )
 
   private def makeEntry(users: List[User.ID], data: Atom): Fu[Entry] = {
     val entry = Entry.make(data)

@@ -13,15 +13,18 @@ final class Player(
     gameRepo: GameRepo,
     uciMemo: UciMemo,
     val maxPlies: Int
-)(implicit ec: scala.concurrent.ExecutionContext, system: akka.actor.ActorSystem) {
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    system: akka.actor.ActorSystem
+) {
 
   def apply(game: Game): Funit =
     game.aiLevel ?? { level =>
       Future.delay(delayFor(game) | 0.millis) {
         makeWork(game, level) addEffect redis.request void
       }
-    } recover {
-      case e: Exception => logger.info(e.getMessage)
+    } recover { case e: Exception =>
+      logger.info(e.getMessage)
     }
 
   private val delayFactor  = 0.011f

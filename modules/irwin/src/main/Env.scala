@@ -18,24 +18,23 @@ final class Env(
     analysisRepo: lila.analyse.AnalysisRepo,
     settingStore: lila.memo.SettingStore.Builder,
     db: lila.db.Db
-)(implicit ec: scala.concurrent.ExecutionContext, system: ActorSystem) {
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    system: ActorSystem
+) {
 
   private lazy val reportColl = db(CollName("irwin_report"))
 
-  lazy val irwinModeSetting = settingStore[String](
-    "irwinMode",
-    default = "none",
-    text = "Allow Irwin to: [mark|report|none]".some
-  )
+  lazy val irwinThresholdsSetting = IrwinThresholds makeSetting settingStore
 
   lazy val stream = wire[IrwinStream]
 
   lazy val api = wire[IrwinApi]
 
   system.scheduler.scheduleWithFixedDelay(5 minutes, 5 minutes) { () =>
-    tournamentApi.allCurrentLeadersInStandard flatMap api.requests.fromTournamentLeaders
+    tournamentApi.allCurrentLeadersInStandard.flatMap(api.requests.fromTournamentLeaders).unit
   }
   system.scheduler.scheduleWithFixedDelay(15 minutes, 15 minutes) { () =>
-    userCache.getTop50Online flatMap api.requests.fromLeaderboard
+    userCache.getTop50Online.flatMap(api.requests.fromLeaderboard).unit
   }
 }

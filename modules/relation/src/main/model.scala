@@ -1,8 +1,5 @@
 package lila.relation
 
-import lila.common.LightUser
-import reactivemongo.api.bson._
-
 case class Follower(u1: String) {
   def userId = u1
 }
@@ -22,9 +19,14 @@ case class Related(
     relation: Option[Relation]
 )
 
-private[relation] case class FriendEntering(user: LightUser, isPlaying: Boolean, isStudying: Boolean)
+case class Relations(
+    in: Option[Relation],
+    out: Option[Relation]
+)
 
 object BSONHandlers {
+
+  import reactivemongo.api.bson._
 
   implicit private[relation] val followerBSONHandler = Macros.handler[Follower]
   implicit private[relation] val followedBSONHandler = Macros.handler[Followed]

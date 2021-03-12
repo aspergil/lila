@@ -5,7 +5,6 @@ import play.api.data._
 
 import lila.api.Context
 import lila.app.ui.ScalatagsTemplate._
-import lila.i18n.I18nDb
 
 trait FormHelper { self: I18nHelper =>
 
@@ -14,7 +13,7 @@ trait FormHelper { self: I18nHelper =>
   def errMsg(form: Form[_])(implicit ctx: Context): Frag = errMsg(form.errors)
 
   def errMsg(error: FormError)(implicit ctx: Context): Frag =
-    p(cls := "error")(transKey(error.message, I18nDb.Site, error.args))
+    p(cls := "error")(transKey(error.message, error.args))
 
   def errMsg(errors: Seq[FormError])(implicit ctx: Context): Frag =
     errors map errMsg
@@ -39,19 +38,20 @@ trait FormHelper { self: I18nHelper =>
     private def errors(errs: Seq[FormError])(implicit ctx: Context): Frag = errs map error
     private def errors(field: Field)(implicit ctx: Context): Frag         = errors(field.errors)
     private def error(err: FormError)(implicit ctx: Context): Frag =
-      p(cls := "error")(transKey(err.message, I18nDb.Site, err.args))
+      p(cls := "error")(transKey(err.message, err.args))
 
-    private def validationModifiers(field: Field): Seq[Modifier] = field.constraints collect {
-      /* Can't use constraint.required, because it applies to optional fields
-       * such as `optional(nonEmptyText)`.
-       * And we can't tell from the Field whether it's optional or not :(
-       */
-      // case ("constraint.required", _) => required
-      case ("constraint.minLength", Seq(m: Int)) => minlength := m
-      case ("constraint.maxLength", Seq(m: Int)) => maxlength := m
-      case ("constraint.min", Seq(m: Int))       => min := m
-      case ("constraint.max", Seq(m: Int))       => max := m
-    }
+    private def validationModifiers(field: Field): Seq[Modifier] =
+      field.constraints collect {
+        /* Can't use constraint.required, because it applies to optional fields
+         * such as `optional(nonEmptyText)`.
+         * And we can't tell from the Field whether it's optional or not :(
+         */
+        // case ("constraint.required", _) => required
+        case ("constraint.minLength", Seq(m: Int)) => minlength := m
+        case ("constraint.maxLength", Seq(m: Int)) => maxlength := m
+        case ("constraint.min", Seq(m: Int))       => min := m
+        case ("constraint.max", Seq(m: Int))       => max := m
+      }
 
     val split = div(cls := "form-split")
 
@@ -100,40 +100,54 @@ trait FormHelper { self: I18nHelper =>
       )(
         div(
           span(cls := "form-check-input")(
-            st.input(
-              st.id := id(field),
-              name := field.name,
-              value := "true",
-              tpe := "checkbox",
-              cls := "form-control cmn-toggle",
-              field.value.has("true") option checked,
-              disabled option st.disabled
-            ),
-            label(`for` := id(field))
+            cmnToggle(id(field), field.name, field.value.has("true"), disabled)
           ),
           groupLabel(field)(labelContent)
         ),
         help map { helper(_) }
       )
 
+    def cmnToggle(
+        fieldId: String,
+        fieldName: String,
+        checked: Boolean,
+        disabled: Boolean = false,
+        value: String = "true"
+    ) =
+      frag(
+        st.input(
+          st.id := fieldId,
+          name := fieldName,
+          st.value := value,
+          tpe := "checkbox",
+          cls := "form-control cmn-toggle",
+          checked option st.checked,
+          disabled option st.disabled
+        ),
+        label(`for` := fieldId)
+      )
+
     def select(
         field: Field,
         options: Iterable[(Any, String)],
-        default: Option[String] = None
+        default: Option[String] = None,
+        disabled: Boolean = false
     ): Frag =
-      st.select(
-        st.id := id(field),
-        name := field.name,
-        cls := "form-control"
-      )(validationModifiers(field))(
-        default map { option(value := "")(_) },
-        options.toSeq map {
-          case (value, name) =>
+      frag(
+        st.select(
+          st.id := id(field),
+          name := field.name,
+          cls := "form-control"
+        )(disabled option (st.disabled := true))(validationModifiers(field))(
+          default map { option(value := "")(_) },
+          options.toSeq map { case (value, name) =>
             option(
               st.value := value.toString,
               field.value.has(value.toString) option selected
             )(name)
-        }
+          }
+        ),
+        disabled option hidden(field)
       )
 
     def textarea(
@@ -169,32 +183,35 @@ trait FormHelper { self: I18nHelper =>
         title := confirm
       )(content)
 
-    def hidden(field: Field, value: Option[String] = None): Frag = st.input(
-      st.id := id(field),
-      name := field.name,
-      st.value := value.orElse(field.value),
-      tpe := "hidden"
-    )
+    def hidden(field: Field, value: Option[String] = None): Tag =
+      hidden(field.name, ~value.orElse(field.value))
 
-    def hidden(name: String, value: String): Tag = st.input(
-      st.name := name,
-      st.value := value,
-      tpe := "hidden"
-    )
-
-    def password(field: Field, content: Frag)(implicit ctx: Context): Frag =
-      group(field, content)(input(_, typ = "password")(required))
+    def hidden(name: String, value: String): Tag =
+      st.input(
+        st.name := name,
+        st.value := value,
+        tpe := "hidden"
+      )
 
     def passwordModified(field: Field, content: Frag)(modifiers: Modifier*)(implicit ctx: Context): Frag =
       group(field, content)(input(_, typ = "password")(required)(modifiers))
+
+    def passwordComplexityMeter(labelContent: Frag): Frag =
+      div(cls := "password-complexity")(
+        label(cls := "password-complexity-label")(labelContent),
+        div(cls := "password-complexity-meter")(
+          for (_ <- 1 to 4)
+            yield span()
+        )
+      )
 
     def globalError(form: Form[_])(implicit ctx: Context): Option[Frag] =
       form.globalError map { err =>
         div(cls := "form-group is-invalid")(error(err))
       }
 
-    def flatpickr(field: Field, withTime: Boolean = true): Frag =
-      input(field, klass = "flatpickr")(
+    def flatpickr(field: Field, withTime: Boolean = true, utc: Boolean = false): Tag =
+      input(field, klass = s"flatpickr${if (utc) " flatpickr-utc" else ""}")(
         dataEnableTime := withTime,
         datatime24h := withTime
       )

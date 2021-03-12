@@ -9,6 +9,7 @@ case class Note(
     to: User.ID,
     text: String,
     mod: Boolean,
+    dox: Boolean,
     date: DateTime
 ) {
   def userIds            = List(from, to)
@@ -19,53 +20,59 @@ case class UserNotes(user: User, notes: List[Note])
 
 final class NoteApi(
     userRepo: UserRepo,
-    coll: Coll,
-    timeline: lila.hub.actors.Timeline
-)(implicit ec: scala.concurrent.ExecutionContext, ws: play.api.libs.ws.WSClient) {
+    coll: Coll
+)(implicit
+    ec: scala.concurrent.ExecutionContext,
+    ws: play.api.libs.ws.StandaloneWSClient
+) {
 
   import reactivemongo.api.bson._
   import lila.db.BSON.BSONJodaDateTimeHandler
   implicit private val noteBSONHandler = Macros.handler[Note]
 
   def get(user: User, me: User, isMod: Boolean): Fu[List[Note]] =
-    coll.ext
+    coll
       .find(
         $doc("to" -> user.id) ++ {
-          if (isMod) $doc("mod" -> true)
-          else $doc("from"      -> me.id)
+          if (isMod)
+            $or(
+              $doc("from" -> me.id),
+              $doc("mod"  -> true)
+            )
+          else $doc("from" -> me.id)
         }
       )
       .sort($sort desc "date")
-      .list[Note](20)
+      .cursor[Note]()
+      .list(20)
 
   def forMod(id: User.ID): Fu[List[Note]] =
-    coll.ext
+    coll
       .find($doc("to" -> id, "mod" -> true))
       .sort($sort desc "date")
-      .list[Note](20)
+      .cursor[Note]()
+      .list(20)
 
   def forMod(ids: List[User.ID]): Fu[List[Note]] =
-    coll.ext
+    coll
       .find($doc("to" $in ids, "mod" -> true))
       .sort($sort desc "date")
-      .list[Note](50)
+      .cursor[Note]()
+      .list(50)
 
-  def write(to: User, text: String, from: User, modOnly: Boolean) = {
+  def write(to: User, text: String, from: User, modOnly: Boolean, dox: Boolean) = {
 
     val note = Note(
-      _id = ornicar.scalalib.Random nextString 8,
+      _id = lila.common.ThreadLocalRandom nextString 8,
       from = from.id,
       to = to.id,
       text = text,
       mod = modOnly,
+      dox = modOnly && (dox || Title.fromUrl.toFideId(text).isDefined),
       date = DateTime.now
     )
 
-    coll.insert.one(note) >>- {
-      import lila.hub.actorApi.timeline.{ NoteCreate, Propagate }
-      timeline ! {
-        Propagate(NoteCreate(note.from, note.to)) toFriendsOf from.id exceptUser note.to modsOnly note.mod
-      }
+    coll.insert.one(note) >>-
       lila.common.Bus.publish(
         lila.hub.actorApi.user.Note(
           from = from.username,
@@ -75,7 +82,6 @@ final class NoteApi(
         ),
         "userNote"
       )
-    }
   } >> {
     modOnly ?? Title.fromUrl(text) flatMap {
       _ ?? { userRepo.addTitle(to.id, _) }
@@ -85,7 +91,7 @@ final class NoteApi(
   def lichessWrite(to: User, text: String) =
     userRepo.lichess flatMap {
       _ ?? {
-        write(to, text, _, true)
+        write(to, text, _, modOnly = true, dox = false)
       }
     }
 

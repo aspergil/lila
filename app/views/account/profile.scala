@@ -10,7 +10,7 @@ import controllers.routes
 object profile {
 
   private val linksHelp = frag(
-    "Such as Twitter, Facebook, GitHub, Chess.com, ...",
+    "Twitter, Facebook, GitHub, Chess.com, ...",
     br,
     "One URL per line."
   )
@@ -22,6 +22,7 @@ object profile {
     ) {
       div(cls := "account box box-pad")(
         h1(trans.editProfile()),
+        standardFlash(),
         postForm(cls := "form3", action := routes.Account.profileApply)(
           div(cls := "form-group")(trans.allInformationIsPublicAndOptional()),
           form3.split(
@@ -30,11 +31,10 @@ object profile {
             },
             form3.group(form("location"), trans.location(), half = true)(form3.input(_))
           ),
-          NotForKids {
+          ctx.noKid option
             form3.group(form("bio"), trans.biography(), help = trans.biographyDescription().some) { f =>
               form3.textarea(f)(rows := 5)
-            }
-          },
+            },
           form3.split(
             form3.group(form("firstName"), trans.firstName(), half = true)(form3.input(_)),
             form3.group(form("lastName"), trans.lastName(), half = true)(form3.input(_))
@@ -49,7 +49,7 @@ object profile {
               )(form3.input(_, typ = "number"))
             }
           ),
-          form3.group(form("links"), raw("Social media links "), help = Some(linksHelp)) { f =>
+          form3.group(form("links"), trans.socialMediaLinks(), help = Some(linksHelp)) { f =>
             form3.textarea(f)(rows := 5)
           },
           form3.action(form3.submit(trans.apply()))

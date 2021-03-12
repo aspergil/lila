@@ -1,7 +1,8 @@
 package lila.coach
 
-import lila.db.dsl._
 import reactivemongo.api.bson._
+
+import lila.db.dsl._
 
 private[coach] object BsonHandlers {
 

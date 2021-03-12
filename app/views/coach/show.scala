@@ -10,12 +10,15 @@ import controllers.routes
 
 object show {
 
-  private def section(title: String, text: Option[lila.coach.CoachProfile.RichText]) = text.map { t =>
-    st.section(
-      h2(title),
-      div(cls := "content")(richText(t.value))
-    )
-  }
+  import trans.coach._
+
+  private def section(title: Frag, text: Option[lila.coach.CoachProfile.RichText]) =
+    text.map { t =>
+      st.section(
+        h2(title),
+        div(cls := "content")(richText(t.value))
+      )
+    }
 
   def apply(
       c: lila.coach.Coach.WithUser,
@@ -25,19 +28,10 @@ object show {
   )(implicit ctx: Context) = {
     val profile   = c.coach.profile
     val coachName = s"${c.user.title.??(t => s"$t ")}${c.user.realNameOrUsername}"
-    val title     = s"$coachName coaches chess students"
+    val title     = xCoachesStudents.txt(coachName)
     views.html.base.layout(
       title = title,
-      moreJs = frag(
-        jsAt("vendor/bar-rating/dist/jquery.barrating.min.js"),
-        ctx.isAuth option embedJsUnsafe("""$(function() {
-$(".bar-rating").barrating();
-$('.coach-review-form .toggle').click(function() {
-$(this).remove();
-$('.coach-review-form form').show();
-});
-});""")
-      ),
+      moreJs = jsModule("coach.show"),
       moreCss = cssTag("coach"),
       openGraph = lila.app.ui
         .OpenGraph(
@@ -52,9 +46,7 @@ $('.coach-review-form form').show();
       main(cls := "coach-show coach-full-page")(
         st.aside(cls := "coach-show__side coach-side")(
           a(cls := "button button-empty", href := routes.User.show(c.user.username))(
-            "View ",
-            c.user.username,
-            " lichess profile"
+            viewXProfile(c.user.username)
           ),
           if (ctx.me.exists(c.coach.is))
             frag(
@@ -66,25 +58,23 @@ $('.coach-review-form form').show();
             a(
               cls := "text button button-empty",
               dataIcon := "c",
-              href := s"${routes.Message.form}?user=${c.user.username}"
-            )(
-              "Send a private message"
-            ),
+              href := s"${routes.Msg.convo(c.user.username)}"
+            )(sendPM()),
           ctx.me.exists(_.id != c.user.id) option review.form(c, myReview),
           review.list(coachReviews)
         ),
         div(cls := "coach-show__main coach-main box")(
           div(cls := "coach-widget")(widget(c, link = false)),
           div(cls := "coach-show__sections")(
-            section("About me", profile.description),
-            section("Playing experience", profile.playingExperience),
-            section("Teaching experience", profile.teachingExperience),
-            section("Other experiences", profile.otherExperience),
-            section("Best skills", profile.skills),
-            section("Teaching methodology", profile.methodology)
+            section(aboutMe(), profile.description),
+            section(playingExperience(), profile.playingExperience),
+            section(teachingExperience(), profile.teachingExperience),
+            section(otherExperiences(), profile.otherExperience),
+            section(bestSkills(), profile.skills),
+            section(teachingMethod(), profile.methodology)
           ),
           studies.nonEmpty option st.section(cls := "coach-show__studies")(
-            h2("Public studies"),
+            h2(publicStudies()),
             div(cls := "studies")(
               studies.map { s =>
                 st.article(cls := "study")(study.bits.widget(s, h3))
@@ -93,13 +83,9 @@ $('.coach-review-form form').show();
           ),
           profile.youtubeUrls.nonEmpty option st.section(cls := "coach-show__youtube")(
             h2(
-              "Youtube videos",
               profile.youtubeChannel.map { url =>
-                frag(
-                  " from my ",
-                  a(href := url, target := "_blank", rel := "nofollow")("channel")
-                )
-              }
+                a(href := url, targetBlank, rel := "nofollow")(youtubeVideos())
+              } getOrElse youtubeVideos()
             ),
             div(cls := "list")(
               profile.youtubeUrls.map { url =>

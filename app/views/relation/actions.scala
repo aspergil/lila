@@ -22,14 +22,14 @@ object actions {
         (myId != userId) ?? frag(
           !blocked option frag(
             a(
-              titleOrText(trans.challengeToPlay.txt()),
-              href := s"${routes.Lobby.home()}?user=$userId#friend",
+              titleOrText(trans.challenge.challengeToPlay.txt()),
+              href := s"${routes.Lobby.home}?user=$userId#friend",
               cls := "btn-rack__btn",
               dataIcon := "U"
             ),
             a(
               titleOrText(trans.composeMessage.txt()),
-              href := s"${routes.Message.form()}?user=$userId",
+              href := routes.Msg.convo(userId),
               cls := "btn-rack__btn",
               dataIcon := "c"
             )

@@ -1,7 +1,6 @@
 package lila.security
 
 import scalatags.Text.all._
-import play.api.i18n.Lang
 import lila.common.config._
 import lila.common.EmailAddress
 import lila.i18n.I18nKeys.{ emails => trans }
@@ -16,38 +15,42 @@ final class EmailChange(
 
   import Mailgun.html._
 
-  def send(user: User, email: EmailAddress)(implicit lang: Lang): Funit =
+  def send(user: User, email: EmailAddress): Funit =
     tokener make TokenPayload(user.id, email).some flatMap { token =>
       lila.mon.email.send.change.increment()
-      val url = s"$baseUrl/account/email/confirm/$token"
+      implicit val lang = user.realLang | lila.i18n.defaultLang
+      val url           = s"$baseUrl/account/email/confirm/$token"
       lila.log("auth").info(s"Change email URL ${user.username} $email $url")
       mailgun send Mailgun.Message(
         to = email,
-        subject = trans.emailChange_subject.literalTxtTo(lang, List(user.username)),
+        subject = trans.emailChange_subject.txt(user.username),
         text = s"""
-${trans.emailChange_intro.literalTxtTo(lang)}
-${trans.emailChange_click.literalTxtTo(lang)}
+${trans.emailChange_intro.txt()}
+${trans.emailChange_click.txt()}
 
 $url
 
-${trans.common_orPaste.literalTxtTo(lang)}
+${trans.common_orPaste.txt()}
 
 ${Mailgun.txt.serviceNote}
 """,
         htmlBody = emailMessage(
-          pDesc(trans.emailChange_intro.literalTo(lang)),
-          p(trans.emailChange_click.literalTo(lang)),
+          pDesc(trans.emailChange_intro()),
+          p(trans.emailChange_click()),
           potentialAction(metaName("Change email address"), Mailgun.html.url(url)),
           serviceNote
         ).some
       )
     }
 
-  def confirm(token: String): Fu[Option[User]] =
+  // also returns the previous email address
+  def confirm(token: String): Fu[Option[(User, Option[EmailAddress])]] =
     tokener read token dmap (_.flatten) flatMap {
-      _ ?? {
-        case TokenPayload(userId, email) =>
-          userRepo.setEmail(userId, email).nevermind >> userRepo.byId(userId)
+      _ ?? { case TokenPayload(userId, email) =>
+        userRepo.email(userId) flatMap { previous =>
+          (userRepo.setEmail(userId, email).nevermind >> userRepo.byId(userId))
+            .map2(_ -> previous)
+        }
       }
     }
 
@@ -55,20 +58,22 @@ ${Mailgun.txt.serviceNote}
 
   implicit final private val payloadSerializable = new StringToken.Serializable[Option[TokenPayload]] {
     private val sep = ' '
-    def read(str: String) = str.split(sep) match {
-      case Array(id, email) => EmailAddress from email map { TokenPayload(id, _) }
-      case _                => none
-    }
-    def write(a: Option[TokenPayload]) = a ?? {
-      case TokenPayload(userId, EmailAddress(email)) => s"$userId$sep$email"
-    }
+    def read(str: String) =
+      str.split(sep) match {
+        case Array(id, email) => EmailAddress from email map { TokenPayload(id, _) }
+        case _                => none
+      }
+    def write(a: Option[TokenPayload]) =
+      a ?? { case TokenPayload(userId, EmailAddress(email)) =>
+        s"$userId$sep$email"
+      }
   }
 
   private val tokener = new StringToken[Option[TokenPayload]](
     secret = tokenerSecret,
     getCurrentValue = p =>
-      p ?? {
-        case TokenPayload(userId, _) => userRepo email userId dmap (_.??(_.value))
+      p ?? { case TokenPayload(userId, _) =>
+        userRepo email userId dmap (_.??(_.value))
       }
   )
 }

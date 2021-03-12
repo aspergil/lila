@@ -8,7 +8,8 @@ import lila.common.config.CollName
 @Module
 final class Env(
     appConfig: Configuration,
-    messenger: lila.message.MessageApi,
+    messenger: lila.msg.MsgApi,
+    reporter: lila.hub.actors.Report,
     chatApi: lila.chat.ChatApi,
     userRepo: lila.user.UserRepo,
     lightUser: lila.common.LightUser.Getter,
@@ -21,8 +22,6 @@ final class Env(
   )
 
   private lazy val feedback = wire[PlaybanFeedback]
-
-  private lazy val sandbag = wire[SandbagWatch]
 
   lazy val api = wire[PlaybanApi]
 }

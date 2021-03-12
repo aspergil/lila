@@ -8,6 +8,7 @@ import GamebookPlayCtrl from './gamebook/gamebookPlayCtrl';
 import { GamebookOverride } from './gamebook/interfaces';
 import { GlyphCtrl } from './studyGlyph';
 import { CommentForm } from './commentForm';
+import { TopicsCtrl } from './topics';
 import RelayCtrl from './relay/relayCtrl';
 import { ServerEvalCtrl } from './serverEval';
 import { MultiBoardCtrl } from './multiBoard';
@@ -25,6 +26,7 @@ export interface StudyCtrl {
   notif: NotifCtrl;
   commentForm: CommentForm;
   glyphForm: GlyphCtrl;
+  topics: TopicsCtrl;
   serverEval: ServerEvalCtrl;
   share: any;
   tags: any;
@@ -90,14 +92,18 @@ export interface StudyData {
   createdAt: number;
   from: string;
   likes: number;
-  isNew?: boolean
+  isNew?: boolean;
   liked: boolean;
   features: StudyFeatures;
-  chapters: StudyChapterMeta[]
+  chapters: StudyChapterMeta[];
   chapter: StudyChapter;
   secondsSinceUpdate: number;
   description?: string;
+  topics?: Topic[];
+  admin: boolean;
 }
+
+export type Topic = string;
 
 type UserSelection = 'nobody' | 'owner' | 'contributor' | 'member' | 'everyone';
 
@@ -115,7 +121,7 @@ export interface ReloadData {
   study: StudyData;
 }
 
-interface Position {
+export interface Position {
   chapterId: string;
   path: Tree.Path;
 }
@@ -144,7 +150,7 @@ export interface StudyChapter {
   name: string;
   ownerId: string;
   setup: StudyChapterSetup;
-  tags: TagArray[]
+  tags: TagArray[];
   practice: boolean;
   conceal?: number;
   gamebook: boolean;
@@ -174,7 +180,14 @@ interface StudyChapterFeatures {
   explorer: boolean;
 }
 
-export type StudyMember = any;
+export type StudyMember = {
+  user: {
+    id: string;
+    name: string;
+    title?: string;
+  };
+  role: string;
+};
 
 export interface StudyMemberMap {
   [id: string]: StudyMember;
@@ -188,20 +201,20 @@ export interface LocalPaths {
 }
 
 export interface ChapterPreview {
-  id: string
-  name: string
+  id: string;
+  name: string;
   players?: {
-    white: ChapterPreviewPlayer
-    black: ChapterPreviewPlayer
-  }
-  orientation: Color
-  fen: string
-  lastMove?: string
-  playing: boolean
+    white: ChapterPreviewPlayer;
+    black: ChapterPreviewPlayer;
+  };
+  orientation: Color;
+  fen: string;
+  lastMove?: string;
+  playing: boolean;
 }
 
 export interface ChapterPreviewPlayer {
-  name: string
-  title?: string
-  rating?: number
+  name: string;
+  title?: string;
+  rating?: number;
 }

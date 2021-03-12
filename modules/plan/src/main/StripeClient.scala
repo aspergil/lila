@@ -1,24 +1,53 @@
 package lila.plan
 
 import play.api.libs.json._
-import play.api.libs.ws.{ WSClient, WSResponse }
+import play.api.libs.ws.DefaultBodyWritables._
+import play.api.libs.ws.JsonBodyReadables._
+import play.api.libs.ws.{ StandaloneWSClient, StandaloneWSResponse }
 
 import lila.common.config.Secret
 import lila.user.User
 
 final private class StripeClient(
-    ws: WSClient,
+    ws: StandaloneWSClient,
     config: StripeClient.Config
 )(implicit ec: scala.concurrent.ExecutionContext) {
 
   import StripeClient._
   import JsonHandlers._
 
-  def createCustomer(user: User, data: Checkout, plan: StripePlan): Fu[StripeCustomer] =
+  def sessionArgs(data: CreateStripeSession): List[(String, Any)] =
+    List(
+      "payment_method_types[]" -> "card",
+      "success_url"            -> data.success_url,
+      "cancel_url"             -> data.cancel_url,
+      "customer"               -> data.customer_id.value
+    )
+
+  def createOneTimeSession(data: CreateStripeSession): Fu[StripeSession] = {
+    val args = sessionArgs(data) ++ List(
+      "line_items[][name]"     -> "One-time payment",
+      "line_items[][quantity]" -> 1,
+      "line_items[][amount]"   -> data.checkout.amount.value,
+      "line_items[][currency]" -> "usd",
+      "line_items[][description]" -> {
+        if (data.checkout.amount.value >= 25000)
+          s"Lifetime Patron status on lichess.org. <3 Your support makes a huge difference!"
+        else
+          s"One month of Patron status on lichess.org. <3 Your support makes a huge difference!"
+      }
+    )
+    postOne[StripeSession]("checkout/sessions", args: _*)
+  }
+
+  def createMonthlySession(data: CreateStripeSession, plan: StripePlan): Fu[StripeSession] = {
+    val args = sessionArgs(data) ++ List("subscription_data[items][][plan]" -> plan.id)
+    postOne[StripeSession]("checkout/sessions", args: _*)
+  }
+
+  def createCustomer(user: User, data: Checkout): Fu[StripeCustomer] =
     postOne[StripeCustomer](
       "customers",
-      "plan"        -> plan.id,
-      "source"      -> data.source.value,
       "email"       -> data.email,
       "description" -> user.username
     )
@@ -27,7 +56,6 @@ final private class StripeClient(
     postOne[StripeCustomer](
       "customers",
       "plan"        -> plan.id,
-      "source"      -> data.source.value,
       "email"       -> data.email,
       "description" -> "Anonymous"
     )
@@ -35,23 +63,13 @@ final private class StripeClient(
   def getCustomer(id: CustomerId): Fu[Option[StripeCustomer]] =
     getOne[StripeCustomer](s"customers/${id.value}")
 
-  def createSubscription(customer: StripeCustomer, plan: StripePlan, source: Source): Fu[StripeSubscription] =
-    postOne[StripeSubscription](
-      "subscriptions",
-      "customer" -> customer.id,
-      "plan"     -> plan.id,
-      "source"   -> source.value
-    )
-
   def updateSubscription(
       sub: StripeSubscription,
-      plan: StripePlan,
-      source: Option[Source]
+      plan: StripePlan
   ): Fu[StripeSubscription] =
     postOne[StripeSubscription](
       s"subscriptions/${sub.id}",
       "plan"    -> plan.id,
-      "source"  -> source.map(_.value),
       "prorate" -> false
     )
 
@@ -59,12 +77,6 @@ final private class StripeClient(
     deleteOne[StripeSubscription](
       s"subscriptions/${sub.id}",
       "at_period_end" -> false
-    )
-
-  def dontRenewSubscription(sub: StripeSubscription): Fu[StripeSubscription] =
-    deleteOne[StripeSubscription](
-      s"subscriptions/${sub.id}",
-      "at_period_end" -> true
     )
 
   def getEvent(id: String): Fu[Option[JsObject]] =
@@ -112,10 +124,9 @@ final private class StripeClient(
   private def getOne[A: Reads](url: String, queryString: (String, Any)*): Fu[Option[A]] =
     get[A](url, queryString) dmap Some.apply recover {
       case _: NotFoundException => None
-      case e: DeletedException => {
+      case e: DeletedException =>
         play.api.Logger("stripe").warn(e.getMessage)
         None
-      }
     }
 
   private def getList[A: Reads](url: String, queryString: (String, Any)*): Fu[List[A]] =
@@ -144,37 +155,38 @@ final private class StripeClient(
   private def request(url: String) =
     ws.url(s"${config.endpoint}/$url").withHttpHeaders("Authorization" -> s"Bearer ${config.secretKey.value}")
 
-  private def response[A: Reads](res: WSResponse): Fu[A] = res.status match {
-    case 200 =>
-      (implicitly[Reads[A]] reads res.json).fold(
-        errs =>
-          fufail {
-            if (isDeleted(res.json))
-              new DeletedException(s"[stripe] Upstream resource was deleted: ${res.json}")
-            else new Exception(s"[stripe] Can't parse ${res.json} --- $errs")
-          },
-        fuccess
-      )
-    case 404 => fufail { new NotFoundException(s"[stripe] Not found") }
-    case x if x >= 400 && x < 500 =>
-      (res.json \ "error" \ "message").asOpt[String] match {
-        case None        => fufail { new InvalidRequestException(Json stringify res.json) }
-        case Some(error) => fufail { new InvalidRequestException(error) }
-      }
-    case status => fufail { new StatusException(s"[stripe] Response status: $status") }
-  }
+  private def response[A: Reads](res: StandaloneWSResponse): Fu[A] =
+    res.status match {
+      case 200 =>
+        (implicitly[Reads[A]] reads res.body[JsValue]).fold(
+          errs =>
+            fufail {
+              if (isDeleted(res.body[JsValue]))
+                new DeletedException(s"[stripe] Upstream resource was deleted: ${res.body}")
+              else new Exception(s"[stripe] Can't parse ${res.body} --- $errs")
+            },
+          fuccess
+        )
+      case 404 => fufail { new NotFoundException(s"[stripe] Not found") }
+      case x if x >= 400 && x < 500 =>
+        (res.body[JsValue] \ "error" \ "message").asOpt[String] match {
+          case None        => fufail { new InvalidRequestException(res.body) }
+          case Some(error) => fufail { new InvalidRequestException(error) }
+        }
+      case status => fufail { new StatusException(s"[stripe] Response status: $status") }
+    }
 
   private def isDeleted(js: JsValue): Boolean =
-    (js.asOpt[JsObject] flatMap { o =>
+    js.asOpt[JsObject] flatMap { o =>
       (o \ "deleted").asOpt[Boolean]
-    }) == Some(true)
+    } contains true
 
   private def fixInput(in: Seq[(String, Any)]): Seq[(String, String)] =
-    (in map {
+    in flatMap {
       case (name, Some(x)) => Some(name -> x.toString)
       case (_, None)       => None
       case (name, x)       => Some(name -> x.toString)
-    }).flatten
+    }
 
   private def listReader[A: Reads]: Reads[List[A]] = (__ \ "data").read[List[A]]
 

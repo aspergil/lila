@@ -1,29 +1,39 @@
 package views.html.mod
 
+import cats.data.NonEmptyList
+import controllers.routes
+import scala.util.matching.Regex
+
 import lila.api.Context
 import lila.app.templating.Environment._
 import lila.app.ui.ScalatagsTemplate._
 import lila.common.String.html.richText
-
-import controllers.routes
+import lila.report.Reason
+import lila.report.Report
+import lila.user.User
 
 object inquiry {
 
   // simul game study relay tournament
-  private val commFlagRegex = """^\[FLAG\] (\w+)/(\w{8}) (.+)$""".r
+  private val commFlagRegex = """\[FLAG\] (\w+)/(\w{8})(?:/w)? (.+)(?:\n|$)""".r
 
   def renderAtomText(atom: lila.report.Report.Atom) =
-    richText(atom.simplifiedText match {
-      case commFlagRegex(resType, resId, text) =>
-        val path = resType match {
-          case "game"                                                     => routes.Round.watcher(resId, "white")
-          case "relay"                                                    => routes.Relay.show("-", resId)
-          case "simul" | "study" | "tournament" | "message" | "broadcast" => s"$resType/$resId"
-          case _                                                          => s"$resType/$resId"
+    richText(
+      commFlagRegex.replaceAllIn(
+        atom.simplifiedText,
+        m => {
+          val id = m.group(2)
+          val path = m.group(1) match {
+            case "game"       => routes.Round.watcher(id, "white")
+            case "relay"      => routes.Relay.show("-", id)
+            case "tournament" => routes.Tournament.show(id)
+            case "swiss"      => routes.Swiss.show(id)
+            case _            => s"/${m.group(1)}/$id"
+          }
+          Regex.quoteReplacement(s"$netBaseUrl$path ${m.group(3)}")
         }
-        s"$netBaseUrl/$path $text"
-      case other => other
-    })
+      )
+    )
 
   def apply(in: lila.mod.Inquiry)(implicit ctx: Context) = {
     def renderReport(r: lila.report.Report) =
@@ -43,10 +53,10 @@ object inquiry {
         }
       )
 
-    def renderNote(r: lila.user.Note) =
-      div(cls := "doc note")(
+    def renderNote(r: lila.user.Note)(implicit ctx: Context) =
+      (!r.dox || isGranted(_.Admin)) option div(cls := "doc note")(
         h3("by ", userIdLink(r.from.some, withOnline = false), ", ", momentFromNow(r.date)),
-        p(richText(r.text))
+        p(richText(r.text, expandImg = false))
       )
 
     def autoNextInput = input(cls := "auto-next", tpe := "hidden", name := "next", value := "1")
@@ -68,7 +78,7 @@ object inquiry {
             in.allReports.map(renderReport)
           )
         ),
-        div(
+        isGranted(_.ModLog) option div(
           cls := List(
             "dropper counter history" -> true,
             "empty"                   -> in.history.isEmpty
@@ -117,37 +127,26 @@ object inquiry {
         )
       ),
       div(cls := "links")(
-        in.report.boostWith
-          .map { userId =>
-            a(href := s"${routes.User.games(in.user.id, "search")}?players.b=${userId}")("View", br, "Games")
-          }
-          .getOrElse {
-            in.report.bestAtomByHuman.map { atom =>
-              a(href := s"${routes.User.games(in.user.id, "search")}?players.b=${atom.by.value}")(
-                "View",
-                br,
-                "Games"
-              )
-            }
-          },
+        boostOpponents(in.report) map { opponents =>
+          a(href := s"${routes.GameMod.index(in.user.id)}?opponents=${opponents.toList mkString ", "}")(
+            "View",
+            br,
+            "Games"
+          )
+        },
         isGranted(_.Shadowban) option
           a(href := routes.Mod.communicationPublic(in.user.id))("View", br, "Comms")
       ),
       div(cls := "actions")(
-        div(cls := "dropper warn buttons")(
+        isGranted(_.ModMessage) option div(cls := "dropper warn buttons")(
           iconTag("e"),
           div(
-            lila.message.ModPreset.all.map { preset =>
-              postForm(action := routes.Mod.warn(in.user.username, preset.subject))(
-                submitButton(cls := "fbt")(preset.subject),
+            env.mod.presets.pmPresets.get().value.map { preset =>
+              postForm(action := routes.Mod.warn(in.user.username, preset.name))(
+                submitButton(cls := "fbt")(preset.name),
                 autoNextInput
               )
-            },
-            form(method := "get", action := routes.Message.form)(
-              input(tpe := "hidden", name := "mod", value := "1"),
-              input(tpe := "hidden", name := "user", value := "@in.user.id"),
-              submitButton(cls := "fbt")("Custom message")
-            )
+            }
           )
         ),
         isGranted(_.MarkEngine) option {
@@ -212,13 +211,12 @@ object inquiry {
       div(cls := "actions close")(
         span(cls := "switcher", title := "Automatically open next report")(
           span(cls := "switch")(
-            input(id := "auto-next", cls := "cmn-toggle", tpe := "checkbox", checked),
-            label(`for` := "auto-next")
+            form3.cmnToggle("auto-next", "auto-next", checked = true)
           )
         ),
         postForm(
           action := routes.Report.process(in.report.id),
-          title := "Dismiss this report as processed.",
+          title := "Dismiss this report as processed. (Hotkey: d)",
           cls := "process"
         )(
           submitButton(dataIcon := "E", cls := "fbt"),
@@ -235,17 +233,36 @@ object inquiry {
     )
   }
 
-  private def thenInput(what: String) = input(tpe := "hidden", name := "then", value := what)
-  private def thenForms(url: String, button: Tag) = div(
-    postForm(
-      action := url,
-      button("And stay on this report"),
-      thenInput("back")
-    ),
-    postForm(
-      action := url,
-      button("Then open profile"),
-      thenInput("profile")
+  private def boostOpponents(report: Report): Option[NonEmptyList[User.ID]] =
+    (report.reason == Reason.Boost) ?? {
+      report.atoms.toList
+        .withFilter(_.byLichess)
+        .flatMap(_.text.linesIterator)
+        .collect {
+          case farmWithRegex(userId)     => List(userId)
+          case sandbagWithRegex(userIds) => userIds.split(' ').toList.map(_.trim.replace("@", ""))
+        }
+        .flatten
+        .distinct
+        .toNel
+    }
+
+  private val farmWithRegex =
+    ("^Boosting: farms rating points from @(" + User.historicalUsernameRegex.pattern + ")").r.unanchored
+  private val sandbagWithRegex =
+    "^Sandbagging: throws games to (.+)".r.unanchored
+
+  private def thenForms(url: String, button: Tag) =
+    div(
+      postForm(
+        action := url,
+        button("And stay on this report"),
+        form3.hidden("next", "0")
+      ),
+      postForm(
+        action := url,
+        button("Then open profile"),
+        form3.hidden("then", "profile")
+      )
     )
-  )
 }

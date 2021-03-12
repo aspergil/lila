@@ -8,13 +8,13 @@ import controllers.routes
 
 object emailConfirm {
 
-  def apply(query: String, user: Option[lila.user.User], email: Option[lila.common.EmailAddress])(
-      implicit ctx: Context
+  def apply(query: String, user: Option[lila.user.User], email: Option[lila.common.EmailAddress])(implicit
+      ctx: Context
   ) =
     views.html.base.layout(
       title = "Email confirmation",
       moreCss = cssTag("mod.misc"),
-      moreJs = embedJsUnsafe("""$('.mod-confirm form input').on('paste', function() {
+      moreJs = embedJsUnsafeLoadThen("""$('.mod-confirm form input').on('paste', function() {
 setTimeout(function() { $(this).parent().submit(); }.bind(this), 50);
 }).each(function() {
 this.setSelectionRange(this.value.length, this.value.length);
@@ -55,7 +55,6 @@ this.setSelectionRange(this.value.length, this.value.length);
                     u.marks.engine option "ENGINE",
                     u.marks.boost option "BOOSTER",
                     u.marks.troll option "SHADOWBAN",
-                    u.marks.ipban option "IPBAN",
                     u.disabled option "CLOSED"
                   ),
                   td(momentFromNow(u.createdAt)),
